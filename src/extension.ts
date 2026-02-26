@@ -131,6 +131,7 @@ function getOpenProjectTaskSyncConfigFromGlobalState(
 		return {
 			enabled: !!values.openProjectEnabled,
 			baseUrl: values.openProjectBaseUrl,
+			apiToken: values.openProjectApiToken,
 			userIdOrMe: values.openProjectUserIdOrMe ?? "me",
 			pollIntervalMinutes: values.openProjectPollIntervalMinutes ?? 10,
 		}

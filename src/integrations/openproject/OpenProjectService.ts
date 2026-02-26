@@ -37,12 +37,13 @@ export class OpenProjectService {
 		// Ensure base URL has no trailing slash for consistent URL building.
 		const normalizedBaseUrl = baseUrl.replace(/\/+$/, "")
 
-		// Filters: assigned_to = userIdOrMe ("me" or numeric ID), status = open ("o" operator).
+		// Filters: assigned_to = userIdOrMe ("me" or numeric ID), status = "New" (ID 1).
+		// Using operator "=" with value "1" to match only "New" status work packages.
 		// See OpenProject API docs for /api/v3/work_packages filters.
 		const filters = encodeURIComponent(
 			JSON.stringify([
 				{ assigned_to: { operator: "=", values: [userIdOrMe] } },
-				{ status: { operator: "o", values: [""] } },
+				{ status: { operator: "=", values: ["1"] } },
 			]),
 		)
 
@@ -130,5 +131,40 @@ export class OpenProjectService {
 		})
 
 		return tasks
+	}
+
+	/**
+	 * Update the status of a work package in OpenProject.
+	 * Typically used to move a task to "In Progress" (status ID 7) after pickup.
+	 */
+	public async updateWorkPackageStatus(
+		config: OpenProjectClientConfig,
+		workPackageId: number,
+		statusId: number,
+	): Promise<void> {
+		const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "")
+		const url = `${normalizedBaseUrl}/api/v3/work_packages/${workPackageId}`
+		const auth = Buffer.from(`apikey:${config.apiToken}`).toString("base64")
+
+		const response = await fetch(url, {
+			method: "PATCH",
+			headers: {
+				Authorization: `Basic ${auth}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				_links: {
+					status: {
+						href: `/api/v3/statuses/${statusId}`,
+					},
+				},
+			}),
+		})
+
+		if (!response.ok) {
+			throw new Error(
+				`Failed to update work package ${workPackageId} status: ${response.status} ${response.statusText}`,
+			)
+		}
 	}
 }

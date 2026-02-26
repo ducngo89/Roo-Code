@@ -144,7 +144,7 @@ export class OpenProjectTaskSync {
 			this.log("[OpenProjectTaskSync] Retrieved tasks from OpenProject:", tasks.length)
 
 			for (const task of tasks) {
-				await this.handleTask(task)
+				await this.handleTask(task, clientConfig)
 			}
 		} catch (error) {
 			this.log(
@@ -160,7 +160,7 @@ export class OpenProjectTaskSync {
 	 * Handle a single OpenProject task. Currently we only create a Roo task
 	 * for tasks we haven't seen before in this session.
 	 */
-	private async handleTask(task: OpenProjectTask): Promise<void> {
+	private async handleTask(task: OpenProjectTask, clientConfig: OpenProjectClientConfig): Promise<void> {
 		if (this.knownTaskIds.has(task.id)) {
 			return
 		}
@@ -173,6 +173,16 @@ export class OpenProjectTaskSync {
 
 		try {
 			await this.provider.createTask(prompt)
+
+			// Update the work package status to "In Progress" (status ID 7) after successful Roo task creation.
+			try {
+				await this.service.updateWorkPackageStatus(clientConfig, task.id, 7) // 7 = "In Progress"
+				this.log(`[OpenProjectTaskSync] Updated OpenProject task #${task.id} status to In Progress`)
+			} catch (statusError) {
+				this.log(
+					`[OpenProjectTaskSync] Warning: Failed to update status for task #${task.id}: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
+				)
+			}
 		} catch (error) {
 			this.log(
 				`[OpenProjectTaskSync] Failed to create Roo task for OpenProject work package ${task.id}:`,
