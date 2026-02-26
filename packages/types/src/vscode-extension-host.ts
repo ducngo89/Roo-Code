@@ -372,9 +372,10 @@ export type ExtensionState = Pick<
 	mdmCompliant?: boolean
 	taskSyncEnabled: boolean
 	/**
-	 * OpenProject integration settings mirrored from the user's cloud settings.
+	 * OpenProject integration settings mirrored from the extension global state.
 	 * These are optional and may be undefined if the user has not configured
-	 * the integration.
+	 * the integration. All of these are stored locally in VS Code and are not
+	 * synced via Roo Cloud.
 	 */
 	openProjectEnabled?: boolean
 	openProjectBaseUrl?: string

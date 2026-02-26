@@ -118,40 +118,36 @@ async function checkWorktreeAutoOpen(
 }
 
 /**
- * Read the current OpenProject-related user settings from Roo Cloud and convert
- * them into a scheduler configuration shape.
+ * Read the current OpenProject-related settings from VS Code global state
+ * (ContextProxy) and convert them into a scheduler configuration shape.
+ * These settings are stored entirely locally and are not synced via Roo Cloud.
  */
-function getOpenProjectTaskSyncConfigFromCloud(): Partial<
-	import("./integrations/openproject/OpenProjectTaskSync").OpenProjectTaskSyncConfig
-> {
+function getOpenProjectTaskSyncConfigFromGlobalState(
+	provider: InstanceType<typeof ClineProvider>,
+): Partial<import("./integrations/openproject/OpenProjectTaskSync").OpenProjectTaskSyncConfig> {
 	try {
-		if (!CloudService.hasInstance()) {
-			return { enabled: false }
-		}
-
-		const userSettings = CloudService.instance.getUserSettingsConfig()
+		const values = provider.getValues()
 
 		return {
-			enabled: !!userSettings.openProjectEnabled,
-			baseUrl: userSettings.openProjectBaseUrl,
-			apiToken: userSettings.openProjectApiToken,
-			userIdOrMe: userSettings.openProjectUserIdOrMe ?? "me",
-			pollIntervalMinutes: userSettings.openProjectPollIntervalMinutes ?? 10,
+			enabled: !!values.openProjectEnabled,
+			baseUrl: values.openProjectBaseUrl,
+			userIdOrMe: values.openProjectUserIdOrMe ?? "me",
+			pollIntervalMinutes: values.openProjectPollIntervalMinutes ?? 10,
 		}
 	} catch (error) {
 		console.error(
-			`[OpenProjectTaskSync] failed to read user settings: ${error instanceof Error ? error.message : String(error)}`,
+			`[OpenProjectTaskSync] failed to read global settings: ${error instanceof Error ? error.message : String(error)}`,
 		)
 		return { enabled: false }
 	}
 }
 
-async function refreshOpenProjectTaskSyncFromCloud(): Promise<void> {
+async function refreshOpenProjectTaskSyncFromGlobalState(provider: InstanceType<typeof ClineProvider>): Promise<void> {
 	if (!openProjectTaskSync) {
 		return
 	}
 
-	const config = getOpenProjectTaskSyncConfigFromCloud()
+	const config = getOpenProjectTaskSyncConfigFromGlobalState(provider)
 	openProjectTaskSync.updateConfig(config)
 }
 
@@ -296,7 +292,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	settingsUpdatedHandler = async () => {
 		postStateListener()
-		await refreshOpenProjectTaskSyncFromCloud()
+		await refreshOpenProjectTaskSyncFromGlobalState(provider)
 	}
 
 	userInfoHandler = async ({ userInfo }: { userInfo: CloudUserInfo }) => {
@@ -311,7 +307,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Initialize OpenProject task sync scheduler using the current cloud user settings.
 	try {
-		const initialConfig = getOpenProjectTaskSyncConfigFromCloud()
+		const initialConfig = getOpenProjectTaskSyncConfigFromGlobalState(provider)
 		openProjectTaskSync = new OpenProjectTaskSync({
 			provider,
 			initialConfig,

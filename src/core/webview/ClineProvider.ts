@@ -2204,6 +2204,11 @@ export class ClineProvider
 			includeCurrentCost,
 			maxGitStatusFiles,
 			taskSyncEnabled,
+			openProjectEnabled,
+			openProjectBaseUrl,
+			openProjectApiToken,
+			openProjectUserIdOrMe,
+			openProjectPollIntervalMinutes,
 			imageGenerationProvider,
 			openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel,
@@ -2351,6 +2356,11 @@ export class ClineProvider
 			includeCurrentCost: includeCurrentCost ?? true,
 			maxGitStatusFiles: maxGitStatusFiles ?? 0,
 			taskSyncEnabled,
+			openProjectEnabled,
+			openProjectBaseUrl,
+			openProjectApiToken,
+			openProjectUserIdOrMe,
+			openProjectPollIntervalMinutes,
 			imageGenerationProvider,
 			openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel,
@@ -2468,19 +2478,13 @@ export class ClineProvider
 		try {
 			taskSyncEnabled = CloudService.instance.isTaskSyncEnabled()
 
-			// Mirror OpenProject user settings into ExtensionState so the webview
-			// and internal services can access them. When cloud user settings are
-			// unavailable or do not contain these keys (e.g. in local dev with
-			// StaticSettingsService), fall back to VS Code globalState values.
-			if (CloudService.hasInstance()) {
-				const userSettings = CloudService.instance.getUserSettingsConfig()
-				openProjectEnabled = userSettings.openProjectEnabled ?? stateValues.openProjectEnabled
-				openProjectBaseUrl = userSettings.openProjectBaseUrl ?? stateValues.openProjectBaseUrl
-				openProjectApiToken = userSettings.openProjectApiToken
-				openProjectUserIdOrMe = userSettings.openProjectUserIdOrMe ?? stateValues.openProjectUserIdOrMe ?? "me"
-				openProjectPollIntervalMinutes =
-					userSettings.openProjectPollIntervalMinutes ?? stateValues.openProjectPollIntervalMinutes ?? 10
-			}
+			// OpenProject settings are stored entirely in VS Code global state
+			// (ContextProxy). They are not synced via Roo Cloud.
+			openProjectEnabled = stateValues.openProjectEnabled
+			openProjectBaseUrl = stateValues.openProjectBaseUrl
+			openProjectApiToken = stateValues.openProjectApiToken
+			openProjectUserIdOrMe = stateValues.openProjectUserIdOrMe ?? "me"
+			openProjectPollIntervalMinutes = stateValues.openProjectPollIntervalMinutes ?? 10
 		} catch (error) {
 			console.error(
 				`[getState] failed to get task or OpenProject sync settings: ${error instanceof Error ? error.message : String(error)}`,

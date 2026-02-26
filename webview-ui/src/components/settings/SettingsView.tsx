@@ -427,6 +427,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					// even when Roo Cloud is not configured.
 					openProjectEnabled,
 					openProjectBaseUrl,
+					openProjectApiToken,
 					openProjectUserIdOrMe,
 					openProjectPollIntervalMinutes,
 					imageGenerationProvider,
@@ -434,18 +435,6 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					openRouterImageGenerationSelectedModel,
 					experiments,
 					customSupportPrompts,
-				},
-			})
-
-			// Then, persist OpenProject-specific cloud settings (per-user)
-			vscode.postMessage({
-				type: "openProjectSettings",
-				settings: {
-					openProjectEnabled,
-					openProjectBaseUrl,
-					openProjectApiToken,
-					openProjectUserIdOrMe,
-					openProjectPollIntervalMinutes,
 				},
 			})
 

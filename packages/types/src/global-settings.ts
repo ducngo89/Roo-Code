@@ -169,11 +169,10 @@ export const globalSettingsSchema = z.object({
 
 	/**
 	 * OpenProject integration settings (stored locally in VS Code global state).
-	 * These mirror the cloud user settings but are also available when Roo Cloud
-	 * is not configured or reachable.
 	 */
 	openProjectEnabled: z.boolean().optional(),
 	openProjectBaseUrl: z.string().optional(),
+	openProjectApiToken: z.string().optional(),
 	openProjectUserIdOrMe: z.string().optional(),
 	openProjectPollIntervalMinutes: z.number().optional(),
 
@@ -294,6 +293,7 @@ export const SECRET_STATE_KEYS = [
 // Global secrets that are part of GlobalSettings (not ProviderSettings)
 export const GLOBAL_SECRET_KEYS = [
 	"openRouterImageApiKey", // For image generation
+	"openProjectApiToken", // For OpenProject integration
 ] as const
 
 // Type for the actual secret storage keys

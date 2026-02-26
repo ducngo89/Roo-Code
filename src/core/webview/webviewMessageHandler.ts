@@ -1413,27 +1413,6 @@ export const webviewMessageHandler = async (
 
 			break
 
-		case "openProjectSettings": {
-			// Settings coming from the SettingsView UI; we only care about the OpenProject-related keys.
-			const incoming = (message.settings ?? {}) as Partial<UserSettingsConfig>
-
-			const openProjectSettings: Partial<UserSettingsConfig> = {
-				openProjectEnabled: incoming.openProjectEnabled,
-				openProjectBaseUrl: incoming.openProjectBaseUrl,
-				openProjectApiToken: incoming.openProjectApiToken,
-				openProjectUserIdOrMe: incoming.openProjectUserIdOrMe,
-				openProjectPollIntervalMinutes: incoming.openProjectPollIntervalMinutes,
-			}
-
-			try {
-				await CloudService.instance.updateUserSettings(openProjectSettings)
-			} catch (error) {
-				provider.log(`Failed to update cloud settings for OpenProject: ${error}`)
-			}
-
-			break
-		}
-
 		case "refreshAllMcpServers": {
 			const mcpHub = provider.getMcpHub()
 
