@@ -49,8 +49,8 @@ export class OpenProjectService {
 
 		const url = `${normalizedBaseUrl}/api/v3/work_packages?filters=${filters}`
 
-		// OpenProject typically uses Basic auth with the API token as the username and an empty password.
-		const authHeader = `Basic ${Buffer.from(`${apiToken}:`).toString("base64")}`
+		// OpenProject uses Basic auth with "apikey" as the literal username and the API token as the password.
+		const authHeader = `Basic ${Buffer.from(`apikey:${apiToken}`).toString("base64")}`
 
 		this.log("[OpenProjectService] Fetching assigned open tasks from:", url)
 

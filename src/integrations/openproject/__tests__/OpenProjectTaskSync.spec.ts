@@ -1,9 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import * as vscode from "vscode"
 
 import { OpenProjectService } from "../OpenProjectService"
 import { OpenProjectTaskSync } from "../OpenProjectTaskSync"
 
 declare const global: any
+
+// Mock status bar item factory
+const mockStatusBarItem = {
+	text: "",
+	tooltip: "",
+	name: "",
+	show: vi.fn(),
+	hide: vi.fn(),
+	dispose: vi.fn(),
+}
+
+// Mock vscode module
+vi.mock("vscode", () => ({
+	StatusBarAlignment: { Left: 1, Right: 2 },
+	window: {
+		showInformationMessage: vi.fn(),
+		showErrorMessage: vi.fn(),
+		createStatusBarItem: vi.fn(() => mockStatusBarItem),
+	},
+}))
 
 describe("OpenProjectService", () => {
 	const log = vi.fn()
@@ -206,6 +227,15 @@ describe("OpenProjectTaskSync", () => {
 		// Use real timers but spy so we can ensure cleanup
 		global.setInterval = (...args: any[]) => originalSetInterval(...args)
 		global.clearInterval = (...args: any[]) => originalClearInterval(...args)
+
+		// Clear the vscode mocks between tests
+		vi.mocked(vscode.window.showInformationMessage).mockClear()
+		vi.mocked(vscode.window.showErrorMessage).mockClear()
+		mockStatusBarItem.show.mockClear()
+		mockStatusBarItem.hide.mockClear()
+		mockStatusBarItem.dispose.mockClear()
+		mockStatusBarItem.text = ""
+		mockStatusBarItem.tooltip = ""
 	})
 
 	afterEach(() => {
@@ -356,5 +386,382 @@ describe("OpenProjectTaskSync", () => {
 		expect(warningLog).toBeDefined()
 
 		sync.dispose()
+	})
+
+	it("should show a singular notification when exactly 1 new task is found", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([
+			{
+				id: 10,
+				subject: "Single new task",
+				description: "Only one",
+				status: "New",
+				projectName: "Demo",
+				url: "https://openproject.example.com/api/v3/work_packages/10",
+			},
+		])
+
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(1)
+		expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("OpenProject: Found 1 new task")
+
+		sync.dispose()
+	})
+
+	it("should show a plural notification when multiple new tasks are found", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([
+			{
+				id: 20,
+				subject: "First task",
+				description: "Task one",
+				status: "New",
+				projectName: "Demo",
+				url: "https://openproject.example.com/api/v3/work_packages/20",
+			},
+			{
+				id: 21,
+				subject: "Second task",
+				description: "Task two",
+				status: "New",
+				projectName: "Demo",
+				url: "https://openproject.example.com/api/v3/work_packages/21",
+			},
+			{
+				id: 22,
+				subject: "Third task",
+				description: "Task three",
+				status: "New",
+				projectName: "Demo",
+				url: "https://openproject.example.com/api/v3/work_packages/22",
+			},
+		])
+
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(1)
+		expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("OpenProject: Found 3 new tasks")
+
+		sync.dispose()
+	})
+
+	it("should NOT show a notification when all tasks are already known", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const task = {
+			id: 30,
+			subject: "Already known task",
+			description: "Seen before",
+			status: "New",
+			projectName: "Demo",
+			url: "https://openproject.example.com/api/v3/work_packages/30",
+		}
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([task])
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		// First poll — task is new, notification fires
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(1)
+
+		// Clear so we can assert the second poll doesn't fire again
+		vi.mocked(vscode.window.showInformationMessage).mockClear()
+
+		// Manually trigger a second poll — same task is now known
+		// Access the private pollOnce via casting to test internal behavior
+		await (sync as any).pollOnce()
+
+		expect(vscode.window.showInformationMessage).not.toHaveBeenCalled()
+
+		sync.dispose()
+	})
+
+	it("should show 'Checking...' in status bar at the start of a poll", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([])
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		// We need to capture the status bar state during the fetch, so wrap fetchAssignedOpenTasks
+		let textDuringFetch = ""
+		fetchAssignedOpenTasks.mockImplementation(async () => {
+			textDuringFetch = mockStatusBarItem.text
+			return []
+		})
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		expect(textDuringFetch).toBe("$(sync~spin) OpenProject: Checking...")
+		expect(mockStatusBarItem.show).toHaveBeenCalled()
+
+		sync.dispose()
+	})
+
+	it("should show 'No new tasks' in status bar when all tasks are already known", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([
+			{
+				id: 40,
+				subject: "Already known task",
+				description: "Seen before",
+				status: "New",
+				projectName: "Demo",
+				url: "https://openproject.example.com/api/v3/work_packages/40",
+			},
+		])
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		// First poll — task is new
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		// Clear status bar mock state
+		mockStatusBarItem.show.mockClear()
+		mockStatusBarItem.text = ""
+
+		// Second poll — task is already known → no new tasks
+		await (sync as any).pollOnce()
+
+		expect(mockStatusBarItem.text).toBe("$(circle-slash) OpenProject: No new tasks")
+		expect(mockStatusBarItem.show).toHaveBeenCalled()
+
+		sync.dispose()
+	})
+
+	it("should show correct count in status bar when new tasks are found", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([
+			{
+				id: 60,
+				subject: "Task A",
+				description: "Desc A",
+				status: "New",
+				projectName: "Demo",
+				url: "https://openproject.example.com/api/v3/work_packages/60",
+			},
+			{
+				id: 61,
+				subject: "Task B",
+				description: "Desc B",
+				status: "New",
+				projectName: "Demo",
+				url: "https://openproject.example.com/api/v3/work_packages/61",
+			},
+		])
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		expect(mockStatusBarItem.text).toBe("$(check) OpenProject: 2 new tasks")
+		expect(mockStatusBarItem.show).toHaveBeenCalled()
+
+		sync.dispose()
+	})
+
+	it("should hide status bar when sync is disabled", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([])
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		// Clear hide mock state
+		mockStatusBarItem.hide.mockClear()
+
+		// Disable sync
+		sync.updateConfig({ enabled: false })
+
+		expect(mockStatusBarItem.hide).toHaveBeenCalled()
+
+		sync.dispose()
+	})
+
+	it("should show error in status bar when fetchAssignedOpenTasks throws", async () => {
+		const createTask = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			createTask,
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockRejectedValue(new Error("Network error"))
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+			initialConfig: {
+				enabled: true,
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+				pollIntervalMinutes: 10,
+			},
+		})
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		expect(mockStatusBarItem.text).toBe("$(error) OpenProject: Error")
+		expect(mockStatusBarItem.show).toHaveBeenCalled()
+		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith("OpenProject Sync Error: Network error")
+
+		sync.dispose()
+	})
+
+	it("should dispose status bar item when sync is disposed", async () => {
+		const provider = {
+			createTask: vi.fn().mockResolvedValue(undefined),
+			log: vi.fn(),
+		} as any
+
+		const fetchAssignedOpenTasks = vi.fn().mockResolvedValue([])
+		const updateWorkPackageStatus = vi.fn().mockResolvedValue(undefined)
+		const service = { fetchAssignedOpenTasks, updateWorkPackageStatus } as unknown as OpenProjectService
+
+		const sync = new OpenProjectTaskSync({
+			provider,
+			service,
+			log: vi.fn(),
+		})
+
+		sync.dispose()
+
+		expect(mockStatusBarItem.dispose).toHaveBeenCalled()
 	})
 })

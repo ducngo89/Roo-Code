@@ -231,6 +231,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Initialize the provider *before* the Roo Code Cloud service.
 	const provider = new ClineProvider(context, outputChannel, "sidebar", contextProxy, mdmService)
 
+	provider.onSettingsUpdated = async () => {
+		await refreshOpenProjectTaskSyncFromGlobalState(provider)
+	}
+
 	// Initialize Roo Code Cloud service.
 	const postStateListener = () => ClineProvider.getVisibleInstance()?.postStateToWebviewWithoutClineMessages()
 

@@ -169,6 +169,7 @@ export class ClineProvider
 
 	public isViewLaunched = false
 	public settingsImportedAt?: number
+	public onSettingsUpdated?: () => void | Promise<void>
 	public readonly latestAnnouncementId = "feb-2026-v3.50.0-gemini-31-pro-cli-ndjson-cli-v010" // v3.50.0 Gemini 3.1 Pro Support, CLI NDJSON Protocol, CLI v0.1.0
 	public readonly providerSettingsManager: ProviderSettingsManager
 	public readonly customModesManager: CustomModesManager
@@ -1381,7 +1382,7 @@ export class ClineProvider
 	 */
 	private setWebviewMessageListener(webview: vscode.Webview) {
 		const onReceiveMessage = async (message: WebviewMessage) =>
-			webviewMessageHandler(this, message, this.marketplaceManager)
+			webviewMessageHandler(this, message, this.marketplaceManager, this.onSettingsUpdated)
 
 		const messageDisposable = webview.onDidReceiveMessage(onReceiveMessage)
 		this.webviewDisposables.push(messageDisposable)
