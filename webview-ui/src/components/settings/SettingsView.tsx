@@ -208,6 +208,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		openProjectApiToken,
 		openProjectUserIdOrMe,
 		openProjectPollIntervalMinutes,
+		gitAccessKey,
 	} = cachedState
 
 	const apiConfiguration = useMemo(() => cachedState.apiConfiguration ?? {}, [cachedState.apiConfiguration])
@@ -430,6 +431,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					openProjectApiToken,
 					openProjectUserIdOrMe,
 					openProjectPollIntervalMinutes,
+					gitAccessKey,
 					imageGenerationProvider,
 					openRouterImageApiKey,
 					openRouterImageGenerationSelectedModel,
@@ -853,6 +855,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 								openProjectApiToken={openProjectApiToken}
 								openProjectUserIdOrMe={openProjectUserIdOrMe}
 								openProjectPollIntervalMinutes={openProjectPollIntervalMinutes}
+								gitAccessKey={gitAccessKey}
 								maxImageFileSize={maxImageFileSize}
 								maxTotalImageSize={maxTotalImageSize}
 								profileThresholds={profileThresholds}

@@ -751,6 +751,11 @@
 				"placeholder": "Enter your OpenProject API token",
 				"description": "Personal access token used to authenticate with OpenProject. Make sure this token has permission to read work packages."
 			},
+			"gitAccessKey": {
+				"label": "Git Access Key",
+				"placeholder": "Enter your Git access key",
+				"description": "Personal access key used for git operations when checking out branches from OpenProject tasks."
+			},
 			"user": {
 				"label": "Assignee (user)",
 				"placeholder": "me or user ID",

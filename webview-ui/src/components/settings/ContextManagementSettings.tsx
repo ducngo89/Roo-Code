@@ -38,6 +38,7 @@ type ContextManagementSettingsProps = HTMLAttributes<HTMLDivElement> & {
 	openProjectApiToken?: string
 	openProjectUserIdOrMe?: string
 	openProjectPollIntervalMinutes?: number
+	gitAccessKey?: string
 	maxImageFileSize?: number
 	maxTotalImageSize?: number
 	profileThresholds?: Record<string, number>
@@ -61,6 +62,7 @@ type ContextManagementSettingsProps = HTMLAttributes<HTMLDivElement> & {
 		| "openProjectApiToken"
 		| "openProjectUserIdOrMe"
 		| "openProjectPollIntervalMinutes"
+		| "gitAccessKey"
 		| "maxImageFileSize"
 		| "maxTotalImageSize"
 		| "profileThresholds"
@@ -87,6 +89,7 @@ export const ContextManagementSettings = ({
 	openProjectApiToken,
 	openProjectUserIdOrMe,
 	openProjectPollIntervalMinutes,
+	gitAccessKey,
 	maxImageFileSize,
 	maxTotalImageSize,
 	profileThresholds = {},
@@ -511,6 +514,26 @@ export const ContextManagementSettings = ({
 					/>
 					<div className="text-vscode-descriptionForeground text-sm mt-1">
 						{t("settings:contextManagement.openProject.apiToken.description")}
+					</div>
+				</SearchableSetting>
+
+				<SearchableSetting
+					settingId="context-openproject-git-access-key"
+					section="contextManagement"
+					label={t("settings:contextManagement.openProject.gitAccessKey.label")}>
+					<span className="block font-medium mb-1">
+						{t("settings:contextManagement.openProject.gitAccessKey.label")}
+					</span>
+					<Input
+						type="password"
+						className="w-full bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border px-2 py-1 rounded"
+						value={gitAccessKey ?? ""}
+						placeholder={t("settings:contextManagement.openProject.gitAccessKey.placeholder")}
+						onChange={(e) => setCachedStateField("gitAccessKey", e.target.value)}
+						data-testid="openproject-git-access-key-input"
+					/>
+					<div className="text-vscode-descriptionForeground text-sm mt-1">
+						{t("settings:contextManagement.openProject.gitAccessKey.description")}
 					</div>
 				</SearchableSetting>
 

@@ -382,6 +382,7 @@ export type ExtensionState = Pick<
 	openProjectApiToken?: string
 	openProjectUserIdOrMe?: string
 	openProjectPollIntervalMinutes?: number
+	gitAccessKey?: string
 	openAiCodexIsAuthenticated?: boolean
 	debug?: boolean
 

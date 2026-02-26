@@ -175,6 +175,7 @@ export const globalSettingsSchema = z.object({
 	openProjectApiToken: z.string().optional(),
 	openProjectUserIdOrMe: z.string().optional(),
 	openProjectPollIntervalMinutes: z.number().optional(),
+	gitAccessKey: z.string().optional(),
 
 	terminalOutputPreviewSize: z.enum(["small", "medium", "large"]).optional(),
 	terminalShellIntegrationTimeout: z.number().optional(),
@@ -294,6 +295,7 @@ export const SECRET_STATE_KEYS = [
 export const GLOBAL_SECRET_KEYS = [
 	"openRouterImageApiKey", // For image generation
 	"openProjectApiToken", // For OpenProject integration
+	"gitAccessKey", // For git operations in OpenProject integration
 ] as const
 
 // Type for the actual secret storage keys

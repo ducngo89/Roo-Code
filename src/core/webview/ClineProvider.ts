@@ -2209,6 +2209,7 @@ export class ClineProvider
 			openProjectApiToken,
 			openProjectUserIdOrMe,
 			openProjectPollIntervalMinutes,
+			gitAccessKey,
 			imageGenerationProvider,
 			openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel,
@@ -2361,6 +2362,7 @@ export class ClineProvider
 			openProjectApiToken,
 			openProjectUserIdOrMe,
 			openProjectPollIntervalMinutes,
+			gitAccessKey,
 			imageGenerationProvider,
 			openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel,
@@ -2474,6 +2476,7 @@ export class ClineProvider
 		let openProjectApiToken: string | undefined
 		let openProjectUserIdOrMe: string | undefined
 		let openProjectPollIntervalMinutes: number | undefined
+		let gitAccessKey: string | undefined
 
 		try {
 			taskSyncEnabled = CloudService.instance.isTaskSyncEnabled()
@@ -2485,6 +2488,7 @@ export class ClineProvider
 			openProjectApiToken = stateValues.openProjectApiToken
 			openProjectUserIdOrMe = stateValues.openProjectUserIdOrMe ?? "me"
 			openProjectPollIntervalMinutes = stateValues.openProjectPollIntervalMinutes ?? 10
+			gitAccessKey = stateValues.gitAccessKey
 		} catch (error) {
 			console.error(
 				`[getState] failed to get task or OpenProject sync settings: ${error instanceof Error ? error.message : String(error)}`,
@@ -2598,6 +2602,7 @@ export class ClineProvider
 			openProjectApiToken,
 			openProjectUserIdOrMe,
 			openProjectPollIntervalMinutes,
+			gitAccessKey,
 			imageGenerationProvider: stateValues.imageGenerationProvider,
 			openRouterImageApiKey: stateValues.openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel: stateValues.openRouterImageGenerationSelectedModel,

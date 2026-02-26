@@ -186,6 +186,7 @@ export const userSettingsConfigSchema = z.object({
 	openProjectApiToken: z.string().optional(),
 	openProjectUserIdOrMe: z.string().optional(),
 	openProjectPollIntervalMinutes: z.number().int().positive().optional(),
+	gitAccessKey: z.string().optional(),
 })
 
 export type UserSettingsConfig = z.infer<typeof userSettingsConfigSchema>
