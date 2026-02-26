@@ -371,6 +371,16 @@ export type ExtensionState = Pick<
 	mcpServers?: McpServer[]
 	mdmCompliant?: boolean
 	taskSyncEnabled: boolean
+	/**
+	 * OpenProject integration settings mirrored from the user's cloud settings.
+	 * These are optional and may be undefined if the user has not configured
+	 * the integration.
+	 */
+	openProjectEnabled?: boolean
+	openProjectBaseUrl?: string
+	openProjectApiToken?: string
+	openProjectUserIdOrMe?: string
+	openProjectPollIntervalMinutes?: number
 	openAiCodexIsAuthenticated?: boolean
 	debug?: boolean
 
@@ -476,6 +486,7 @@ export interface WebviewMessage {
 		| "submitEditedMessage"
 		| "editMessageConfirm"
 		| "taskSyncEnabled"
+		| "openProjectSettings"
 		| "searchCommits"
 		| "setApiConfigPassword"
 		| "mode"

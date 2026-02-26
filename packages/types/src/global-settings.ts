@@ -167,6 +167,16 @@ export const globalSettingsSchema = z.object({
 	maxImageFileSize: z.number().optional(),
 	maxTotalImageSize: z.number().optional(),
 
+	/**
+	 * OpenProject integration settings (stored locally in VS Code global state).
+	 * These mirror the cloud user settings but are also available when Roo Cloud
+	 * is not configured or reachable.
+	 */
+	openProjectEnabled: z.boolean().optional(),
+	openProjectBaseUrl: z.string().optional(),
+	openProjectUserIdOrMe: z.string().optional(),
+	openProjectPollIntervalMinutes: z.number().optional(),
+
 	terminalOutputPreviewSize: z.enum(["small", "medium", "large"]).optional(),
 	terminalShellIntegrationTimeout: z.number().optional(),
 	terminalShellIntegrationDisabled: z.boolean().optional(),

@@ -735,6 +735,32 @@
 		"enableSubfolderRules": {
 			"label": "Enable subfolder rules",
 			"description": "Recursively discover and load .roo/rules and AGENTS.md files from subdirectories. Useful for monorepos with per-package rules."
+		},
+		"openProject": {
+			"enabled": {
+				"label": "Enable OpenProject task sync",
+				"description": "When enabled, Roo will periodically fetch tasks from your OpenProject instance and create corresponding Roo tasks."
+			},
+			"baseUrl": {
+				"label": "OpenProject Base URL",
+				"placeholder": "https://your-openproject-domain.example.com",
+				"description": "Base URL of your OpenProject instance (without trailing slash)."
+			},
+			"apiToken": {
+				"label": "OpenProject API token",
+				"placeholder": "Enter your OpenProject API token",
+				"description": "Personal access token used to authenticate with OpenProject. Make sure this token has permission to read work packages."
+			},
+			"user": {
+				"label": "Assignee (user)",
+				"placeholder": "me or user ID",
+				"description": "Which user to fetch tasks for. Use \"me\" to fetch tasks assigned to the authenticated user, or a specific user ID."
+			},
+			"pollInterval": {
+				"label": "Polling interval",
+				"minutes": "minutes",
+				"description": "How often Roo should check OpenProject for new or updated tasks."
+			}
 		}
 	},
 	"terminal": {

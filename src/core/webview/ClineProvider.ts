@@ -2459,12 +2459,31 @@ export class ClineProvider
 		}
 
 		let taskSyncEnabled: boolean = false
+		let openProjectEnabled: boolean | undefined
+		let openProjectBaseUrl: string | undefined
+		let openProjectApiToken: string | undefined
+		let openProjectUserIdOrMe: string | undefined
+		let openProjectPollIntervalMinutes: number | undefined
 
 		try {
 			taskSyncEnabled = CloudService.instance.isTaskSyncEnabled()
+
+			// Mirror OpenProject user settings into ExtensionState so the webview
+			// and internal services can access them. When cloud user settings are
+			// unavailable or do not contain these keys (e.g. in local dev with
+			// StaticSettingsService), fall back to VS Code globalState values.
+			if (CloudService.hasInstance()) {
+				const userSettings = CloudService.instance.getUserSettingsConfig()
+				openProjectEnabled = userSettings.openProjectEnabled ?? stateValues.openProjectEnabled
+				openProjectBaseUrl = userSettings.openProjectBaseUrl ?? stateValues.openProjectBaseUrl
+				openProjectApiToken = userSettings.openProjectApiToken
+				openProjectUserIdOrMe = userSettings.openProjectUserIdOrMe ?? stateValues.openProjectUserIdOrMe ?? "me"
+				openProjectPollIntervalMinutes =
+					userSettings.openProjectPollIntervalMinutes ?? stateValues.openProjectPollIntervalMinutes ?? 10
+			}
 		} catch (error) {
 			console.error(
-				`[getState] failed to get task sync enabled state: ${error instanceof Error ? error.message : String(error)}`,
+				`[getState] failed to get task or OpenProject sync settings: ${error instanceof Error ? error.message : String(error)}`,
 			)
 		}
 
@@ -2570,6 +2589,11 @@ export class ClineProvider
 			includeCurrentCost: stateValues.includeCurrentCost ?? true,
 			maxGitStatusFiles: stateValues.maxGitStatusFiles ?? 0,
 			taskSyncEnabled,
+			openProjectEnabled,
+			openProjectBaseUrl,
+			openProjectApiToken,
+			openProjectUserIdOrMe,
+			openProjectPollIntervalMinutes,
 			imageGenerationProvider: stateValues.imageGenerationProvider,
 			openRouterImageApiKey: stateValues.openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel: stateValues.openRouterImageGenerationSelectedModel,

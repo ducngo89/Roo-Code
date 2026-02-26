@@ -110,6 +110,10 @@ const TaskHeader = ({
 	)
 	const reservedForOutput = maxTokens || 0
 
+	const isOpenProjectTask = useMemo(() => {
+		return typeof task.text === "string" && task.text.startsWith("[OpenProject")
+	}, [task.text])
+
 	const condenseButton = (
 		<LucideIconButton
 			title={t("chat:task.condenseContext")}
@@ -194,6 +198,11 @@ const TaskHeader = ({
 							{isTaskExpanded && <span className="font-bold">{t("chat:task.title")}</span>}
 							{!isTaskExpanded && (
 								<div className="flex items-center gap-2 whitespace-nowrap overflow-hidden text-ellipsis">
+									{isOpenProjectTask && (
+										<span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-vscode-badge-background text-vscode-badge-foreground uppercase tracking-wide">
+											OpenProject
+										</span>
+									)}
 									<Mention text={task.text} />
 								</div>
 							)}

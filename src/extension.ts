@@ -39,6 +39,7 @@ import { MdmService } from "./services/mdm/MdmService"
 import { migrateSettings } from "./utils/migrateSettings"
 import { autoImportSettings } from "./utils/autoImportSettings"
 import { API } from "./extension/api"
+import { OpenProjectTaskSync } from "./integrations/openproject/OpenProjectTaskSync"
 
 import {
 	handleUri,
@@ -65,6 +66,7 @@ let cloudService: CloudService | undefined
 let authStateChangedHandler: ((data: { state: AuthState; previousState: AuthState }) => Promise<void>) | undefined
 let settingsUpdatedHandler: (() => void) | undefined
 let userInfoHandler: ((data: { userInfo: CloudUserInfo }) => Promise<void>) | undefined
+let openProjectTaskSync: OpenProjectTaskSync | undefined
 
 /**
  * Check if we should auto-open the Roo Code sidebar after switching to a worktree.
@@ -113,6 +115,44 @@ async function checkWorktreeAutoOpen(
 			`[Worktree] Error checking worktree auto-open: ${error instanceof Error ? error.message : String(error)}`,
 		)
 	}
+}
+
+/**
+ * Read the current OpenProject-related user settings from Roo Cloud and convert
+ * them into a scheduler configuration shape.
+ */
+function getOpenProjectTaskSyncConfigFromCloud(): Partial<
+	import("./integrations/openproject/OpenProjectTaskSync").OpenProjectTaskSyncConfig
+> {
+	try {
+		if (!CloudService.hasInstance()) {
+			return { enabled: false }
+		}
+
+		const userSettings = CloudService.instance.getUserSettingsConfig()
+
+		return {
+			enabled: !!userSettings.openProjectEnabled,
+			baseUrl: userSettings.openProjectBaseUrl,
+			apiToken: userSettings.openProjectApiToken,
+			userIdOrMe: userSettings.openProjectUserIdOrMe ?? "me",
+			pollIntervalMinutes: userSettings.openProjectPollIntervalMinutes ?? 10,
+		}
+	} catch (error) {
+		console.error(
+			`[OpenProjectTaskSync] failed to read user settings: ${error instanceof Error ? error.message : String(error)}`,
+		)
+		return { enabled: false }
+	}
+}
+
+async function refreshOpenProjectTaskSyncFromCloud(): Promise<void> {
+	if (!openProjectTaskSync) {
+		return
+	}
+
+	const config = getOpenProjectTaskSyncConfigFromCloud()
+	openProjectTaskSync.updateConfig(config)
 }
 
 // This method is called when your extension is activated.
@@ -256,6 +296,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	settingsUpdatedHandler = async () => {
 		postStateListener()
+		await refreshOpenProjectTaskSyncFromCloud()
 	}
 
 	userInfoHandler = async ({ userInfo }: { userInfo: CloudUserInfo }) => {
@@ -267,6 +308,21 @@ export async function activate(context: vscode.ExtensionContext) {
 		"settings-updated": settingsUpdatedHandler,
 		"user-info": userInfoHandler,
 	})
+
+	// Initialize OpenProject task sync scheduler using the current cloud user settings.
+	try {
+		const initialConfig = getOpenProjectTaskSyncConfigFromCloud()
+		openProjectTaskSync = new OpenProjectTaskSync({
+			provider,
+			initialConfig,
+			log: cloudLogger,
+		})
+		context.subscriptions.push(openProjectTaskSync)
+	} catch (error) {
+		outputChannel.appendLine(
+			`[OpenProjectTaskSync] Failed to initialize: ${error instanceof Error ? error.message : String(error)}`,
+		)
+	}
 
 	try {
 		if (cloudService.telemetryClient) {

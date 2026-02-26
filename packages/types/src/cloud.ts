@@ -175,6 +175,17 @@ export type UserFeatures = z.infer<typeof userFeaturesSchema>
 export const userSettingsConfigSchema = z.object({
 	taskSyncEnabled: z.boolean().optional(),
 	llmEnhancedFeaturesEnabled: z.boolean().optional(),
+	/**
+	 * OpenProject integration settings
+	 *
+	 * All fields are optional and can be configured per user. When unset, the
+	 * OpenProject integration is effectively disabled.
+	 */
+	openProjectEnabled: z.boolean().optional(),
+	openProjectBaseUrl: z.string().optional(),
+	openProjectApiToken: z.string().optional(),
+	openProjectUserIdOrMe: z.string().optional(),
+	openProjectPollIntervalMinutes: z.number().int().positive().optional(),
 })
 
 export type UserSettingsConfig = z.infer<typeof userSettingsConfigSchema>
