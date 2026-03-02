@@ -39,6 +39,7 @@ import { MdmService } from "./services/mdm/MdmService"
 import { migrateSettings } from "./utils/migrateSettings"
 import { autoImportSettings } from "./utils/autoImportSettings"
 import { API } from "./extension/api"
+import { OpenProjectTaskSync } from "./integrations/openproject/OpenProjectTaskSync"
 
 import {
 	handleUri,
@@ -65,6 +66,7 @@ let cloudService: CloudService | undefined
 let authStateChangedHandler: ((data: { state: AuthState; previousState: AuthState }) => Promise<void>) | undefined
 let settingsUpdatedHandler: (() => void) | undefined
 let userInfoHandler: ((data: { userInfo: CloudUserInfo }) => Promise<void>) | undefined
+let openProjectTaskSync: OpenProjectTaskSync | undefined
 
 /**
  * Check if we should auto-open the Roo Code sidebar after switching to a worktree.
@@ -113,6 +115,42 @@ async function checkWorktreeAutoOpen(
 			`[Worktree] Error checking worktree auto-open: ${error instanceof Error ? error.message : String(error)}`,
 		)
 	}
+}
+
+/**
+ * Read the current OpenProject-related settings from VS Code global state
+ * (ContextProxy) and convert them into a scheduler configuration shape.
+ * These settings are stored entirely locally and are not synced via Roo Cloud.
+ */
+function getOpenProjectTaskSyncConfigFromGlobalState(
+	provider: InstanceType<typeof ClineProvider>,
+): Partial<import("./integrations/openproject/OpenProjectTaskSync").OpenProjectTaskSyncConfig> {
+	try {
+		const values = provider.getValues()
+
+		return {
+			enabled: !!values.openProjectEnabled,
+			baseUrl: values.openProjectBaseUrl,
+			apiToken: values.openProjectApiToken,
+			userIdOrMe: values.openProjectUserIdOrMe ?? "me",
+			pollIntervalMinutes: values.openProjectPollIntervalMinutes ?? 10,
+			gitAccessKey: values.gitAccessKey,
+		}
+	} catch (error) {
+		console.error(
+			`[OpenProjectTaskSync] failed to read global settings: ${error instanceof Error ? error.message : String(error)}`,
+		)
+		return { enabled: false }
+	}
+}
+
+async function refreshOpenProjectTaskSyncFromGlobalState(provider: InstanceType<typeof ClineProvider>): Promise<void> {
+	if (!openProjectTaskSync) {
+		return
+	}
+
+	const config = getOpenProjectTaskSyncConfigFromGlobalState(provider)
+	openProjectTaskSync.updateConfig(config)
 }
 
 // This method is called when your extension is activated.
@@ -194,6 +232,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Initialize the provider *before* the Roo Code Cloud service.
 	const provider = new ClineProvider(context, outputChannel, "sidebar", contextProxy, mdmService)
 
+	provider.onSettingsUpdated = async () => {
+		await refreshOpenProjectTaskSyncFromGlobalState(provider)
+	}
+
 	// Initialize Roo Code Cloud service.
 	const postStateListener = () => ClineProvider.getVisibleInstance()?.postStateToWebviewWithoutClineMessages()
 
@@ -256,6 +298,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	settingsUpdatedHandler = async () => {
 		postStateListener()
+		await refreshOpenProjectTaskSyncFromGlobalState(provider)
 	}
 
 	userInfoHandler = async ({ userInfo }: { userInfo: CloudUserInfo }) => {
@@ -267,6 +310,21 @@ export async function activate(context: vscode.ExtensionContext) {
 		"settings-updated": settingsUpdatedHandler,
 		"user-info": userInfoHandler,
 	})
+
+	// Initialize OpenProject task sync scheduler using the current cloud user settings.
+	try {
+		const initialConfig = getOpenProjectTaskSyncConfigFromGlobalState(provider)
+		openProjectTaskSync = new OpenProjectTaskSync({
+			provider,
+			initialConfig,
+			log: cloudLogger,
+		})
+		context.subscriptions.push(openProjectTaskSync)
+	} catch (error) {
+		outputChannel.appendLine(
+			`[OpenProjectTaskSync] Failed to initialize: ${error instanceof Error ? error.message : String(error)}`,
+		)
+	}
 
 	try {
 		if (cloudService.telemetryClient) {

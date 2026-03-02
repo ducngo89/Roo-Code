@@ -167,6 +167,16 @@ export const globalSettingsSchema = z.object({
 	maxImageFileSize: z.number().optional(),
 	maxTotalImageSize: z.number().optional(),
 
+	/**
+	 * OpenProject integration settings (stored locally in VS Code global state).
+	 */
+	openProjectEnabled: z.boolean().optional(),
+	openProjectBaseUrl: z.string().optional(),
+	openProjectApiToken: z.string().optional(),
+	openProjectUserIdOrMe: z.string().optional(),
+	openProjectPollIntervalMinutes: z.number().optional(),
+	gitAccessKey: z.string().optional(),
+
 	terminalOutputPreviewSize: z.enum(["small", "medium", "large"]).optional(),
 	terminalShellIntegrationTimeout: z.number().optional(),
 	terminalShellIntegrationDisabled: z.boolean().optional(),
@@ -286,17 +296,39 @@ export const GLOBAL_SECRET_KEYS = [
 	"openRouterImageApiKey", // For image generation
 ] as const
 
+// Workspace-scoped non-secret settings (stored in workspaceState, per workspace)
+export const WORKSPACE_STATE_KEYS = [
+	"openProjectEnabled",
+	"openProjectBaseUrl",
+	"openProjectUserIdOrMe",
+	"openProjectPollIntervalMinutes",
+] as const
+export type WorkspaceStateKey = (typeof WORKSPACE_STATE_KEYS)[number]
+export const isWorkspaceStateKey = (key: string): key is WorkspaceStateKey =>
+	(WORKSPACE_STATE_KEYS as readonly string[]).includes(key)
+
+// Workspace-scoped secret settings (stored with workspace URI prefix in context.secrets)
+export const WORKSPACE_SECRET_KEYS = ["openProjectApiToken", "gitAccessKey"] as const
+export type WorkspaceSecretKey = (typeof WORKSPACE_SECRET_KEYS)[number]
+export const isWorkspaceSecretKey = (key: string): key is WorkspaceSecretKey =>
+	(WORKSPACE_SECRET_KEYS as readonly string[]).includes(key)
+
 // Type for the actual secret storage keys
 type ProviderSecretKey = (typeof SECRET_STATE_KEYS)[number]
 type GlobalSecretKey = (typeof GLOBAL_SECRET_KEYS)[number]
+type WorkspaceSecretKeyType = (typeof WORKSPACE_SECRET_KEYS)[number]
 
 // Type representing all secrets that can be stored
 export type SecretState = Pick<ProviderSettings, Extract<ProviderSecretKey, keyof ProviderSettings>> & {
 	[K in GlobalSecretKey]?: string
+} & {
+	[K in WorkspaceSecretKeyType]?: string
 }
 
 export const isSecretStateKey = (key: string): key is Keys<SecretState> =>
-	SECRET_STATE_KEYS.includes(key as ProviderSecretKey) || GLOBAL_SECRET_KEYS.includes(key as GlobalSecretKey)
+	SECRET_STATE_KEYS.includes(key as ProviderSecretKey) ||
+	GLOBAL_SECRET_KEYS.includes(key as GlobalSecretKey) ||
+	WORKSPACE_SECRET_KEYS.includes(key as WorkspaceSecretKeyType)
 
 /**
  * GlobalState
@@ -305,7 +337,7 @@ export const isSecretStateKey = (key: string): key is Keys<SecretState> =>
 export type GlobalState = Omit<RooCodeSettings, Keys<SecretState>>
 
 export const GLOBAL_STATE_KEYS = [...GLOBAL_SETTINGS_KEYS, ...PROVIDER_SETTINGS_KEYS].filter(
-	(key: Keys<RooCodeSettings>) => !isSecretStateKey(key),
+	(key: Keys<RooCodeSettings>) => !isSecretStateKey(key) && !isWorkspaceStateKey(key),
 ) as Keys<GlobalState>[]
 
 export const isGlobalStateKey = (key: string): key is Keys<GlobalState> =>

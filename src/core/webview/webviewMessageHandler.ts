@@ -92,6 +92,7 @@ export const webviewMessageHandler = async (
 	provider: ClineProvider,
 	message: WebviewMessage,
 	marketplaceManager?: MarketplaceManager,
+	onSettingsUpdated?: () => void | Promise<void>,
 ) => {
 	// Utility functions provided for concise get/update of global state via contextProxy API.
 	const getGlobalState = <K extends keyof GlobalState>(key: K) => provider.contextProxy.getValue(key)
@@ -677,6 +678,10 @@ export const webviewMessageHandler = async (
 				}
 
 				await provider.postStateToWebview()
+
+				if (onSettingsUpdated) {
+					await onSettingsUpdated()
+				}
 			}
 
 			break

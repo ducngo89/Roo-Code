@@ -169,6 +169,7 @@ export class ClineProvider
 
 	public isViewLaunched = false
 	public settingsImportedAt?: number
+	public onSettingsUpdated?: () => void | Promise<void>
 	public readonly latestAnnouncementId = "feb-2026-v3.50.0-gemini-31-pro-cli-ndjson-cli-v010" // v3.50.0 Gemini 3.1 Pro Support, CLI NDJSON Protocol, CLI v0.1.0
 	public readonly providerSettingsManager: ProviderSettingsManager
 	public readonly customModesManager: CustomModesManager
@@ -1381,7 +1382,7 @@ export class ClineProvider
 	 */
 	private setWebviewMessageListener(webview: vscode.Webview) {
 		const onReceiveMessage = async (message: WebviewMessage) =>
-			webviewMessageHandler(this, message, this.marketplaceManager)
+			webviewMessageHandler(this, message, this.marketplaceManager, this.onSettingsUpdated)
 
 		const messageDisposable = webview.onDidReceiveMessage(onReceiveMessage)
 		this.webviewDisposables.push(messageDisposable)
@@ -2204,6 +2205,12 @@ export class ClineProvider
 			includeCurrentCost,
 			maxGitStatusFiles,
 			taskSyncEnabled,
+			openProjectEnabled,
+			openProjectBaseUrl,
+			openProjectApiToken,
+			openProjectUserIdOrMe,
+			openProjectPollIntervalMinutes,
+			gitAccessKey,
 			imageGenerationProvider,
 			openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel,
@@ -2351,6 +2358,12 @@ export class ClineProvider
 			includeCurrentCost: includeCurrentCost ?? true,
 			maxGitStatusFiles: maxGitStatusFiles ?? 0,
 			taskSyncEnabled,
+			openProjectEnabled,
+			openProjectBaseUrl,
+			openProjectApiToken,
+			openProjectUserIdOrMe,
+			openProjectPollIntervalMinutes,
+			gitAccessKey,
 			imageGenerationProvider,
 			openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel,
@@ -2459,12 +2472,27 @@ export class ClineProvider
 		}
 
 		let taskSyncEnabled: boolean = false
+		let openProjectEnabled: boolean | undefined
+		let openProjectBaseUrl: string | undefined
+		let openProjectApiToken: string | undefined
+		let openProjectUserIdOrMe: string | undefined
+		let openProjectPollIntervalMinutes: number | undefined
+		let gitAccessKey: string | undefined
 
 		try {
 			taskSyncEnabled = CloudService.instance.isTaskSyncEnabled()
+
+			// OpenProject settings are stored entirely in VS Code global state
+			// (ContextProxy). They are not synced via Roo Cloud.
+			openProjectEnabled = stateValues.openProjectEnabled
+			openProjectBaseUrl = stateValues.openProjectBaseUrl
+			openProjectApiToken = stateValues.openProjectApiToken
+			openProjectUserIdOrMe = stateValues.openProjectUserIdOrMe ?? "me"
+			openProjectPollIntervalMinutes = stateValues.openProjectPollIntervalMinutes ?? 10
+			gitAccessKey = stateValues.gitAccessKey
 		} catch (error) {
 			console.error(
-				`[getState] failed to get task sync enabled state: ${error instanceof Error ? error.message : String(error)}`,
+				`[getState] failed to get task or OpenProject sync settings: ${error instanceof Error ? error.message : String(error)}`,
 			)
 		}
 
@@ -2570,6 +2598,12 @@ export class ClineProvider
 			includeCurrentCost: stateValues.includeCurrentCost ?? true,
 			maxGitStatusFiles: stateValues.maxGitStatusFiles ?? 0,
 			taskSyncEnabled,
+			openProjectEnabled,
+			openProjectBaseUrl,
+			openProjectApiToken,
+			openProjectUserIdOrMe,
+			openProjectPollIntervalMinutes,
+			gitAccessKey,
 			imageGenerationProvider: stateValues.imageGenerationProvider,
 			openRouterImageApiKey: stateValues.openRouterImageApiKey,
 			openRouterImageGenerationSelectedModel: stateValues.openRouterImageGenerationSelectedModel,

@@ -33,6 +33,12 @@ type ContextManagementSettingsProps = HTMLAttributes<HTMLDivElement> & {
 	maxWorkspaceFiles: number
 	showRooIgnoredFiles?: boolean
 	enableSubfolderRules?: boolean
+	openProjectEnabled?: boolean
+	openProjectBaseUrl?: string
+	openProjectApiToken?: string
+	openProjectUserIdOrMe?: string
+	openProjectPollIntervalMinutes?: number
+	gitAccessKey?: string
 	maxImageFileSize?: number
 	maxTotalImageSize?: number
 	profileThresholds?: Record<string, number>
@@ -51,6 +57,12 @@ type ContextManagementSettingsProps = HTMLAttributes<HTMLDivElement> & {
 		| "maxWorkspaceFiles"
 		| "showRooIgnoredFiles"
 		| "enableSubfolderRules"
+		| "openProjectEnabled"
+		| "openProjectBaseUrl"
+		| "openProjectApiToken"
+		| "openProjectUserIdOrMe"
+		| "openProjectPollIntervalMinutes"
+		| "gitAccessKey"
 		| "maxImageFileSize"
 		| "maxTotalImageSize"
 		| "profileThresholds"
@@ -72,6 +84,12 @@ export const ContextManagementSettings = ({
 	showRooIgnoredFiles,
 	enableSubfolderRules,
 	setCachedStateField,
+	openProjectEnabled,
+	openProjectBaseUrl,
+	openProjectApiToken,
+	openProjectUserIdOrMe,
+	openProjectPollIntervalMinutes,
+	gitAccessKey,
 	maxImageFileSize,
 	maxTotalImageSize,
 	profileThresholds = {},
@@ -437,6 +455,136 @@ export const ContextManagementSettings = ({
 					</VSCodeCheckbox>
 					<div className="text-vscode-descriptionForeground text-sm mt-1 mb-3">
 						{t("settings:contextManagement.includeCurrentCost.description")}
+					</div>
+				</SearchableSetting>
+			</Section>
+			<Section className="pt-2">
+				{/* OpenProject Task Sync Settings */}
+				<SearchableSetting
+					settingId="context-openproject-enabled"
+					section="contextManagement"
+					label={t("settings:contextManagement.openProject.enabled.label")}>
+					<VSCodeCheckbox
+						checked={openProjectEnabled}
+						onChange={(e: any) => setCachedStateField("openProjectEnabled", e.target.checked)}
+						data-testid="openproject-enabled-checkbox">
+						<label className="block font-medium mb-1">
+							{t("settings:contextManagement.openProject.enabled.label")}
+						</label>
+					</VSCodeCheckbox>
+					<div className="text-vscode-descriptionForeground text-sm mt-1 mb-3">
+						{t("settings:contextManagement.openProject.enabled.description")}
+					</div>
+				</SearchableSetting>
+
+				<SearchableSetting
+					settingId="context-openproject-base-url"
+					section="contextManagement"
+					label={t("settings:contextManagement.openProject.baseUrl.label")}>
+					<span className="block font-medium mb-1">
+						{t("settings:contextManagement.openProject.baseUrl.label")}
+					</span>
+					<Input
+						type="text"
+						className="w-full bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border px-2 py-1 rounded"
+						value={openProjectBaseUrl ?? ""}
+						placeholder={t("settings:contextManagement.openProject.baseUrl.placeholder")}
+						onChange={(e) => setCachedStateField("openProjectBaseUrl", e.target.value)}
+						data-testid="openproject-base-url-input"
+					/>
+					<div className="text-vscode-descriptionForeground text-sm mt-1">
+						{t("settings:contextManagement.openProject.baseUrl.description")}
+					</div>
+				</SearchableSetting>
+
+				<SearchableSetting
+					settingId="context-openproject-api-token"
+					section="contextManagement"
+					label={t("settings:contextManagement.openProject.apiToken.label")}>
+					<span className="block font-medium mb-1">
+						{t("settings:contextManagement.openProject.apiToken.label")}
+					</span>
+					<Input
+						type="password"
+						className="w-full bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border px-2 py-1 rounded"
+						value={openProjectApiToken ?? ""}
+						placeholder={t("settings:contextManagement.openProject.apiToken.placeholder")}
+						onChange={(e) => setCachedStateField("openProjectApiToken", e.target.value)}
+						data-testid="openproject-api-token-input"
+					/>
+					<div className="text-vscode-descriptionForeground text-sm mt-1">
+						{t("settings:contextManagement.openProject.apiToken.description")}
+					</div>
+				</SearchableSetting>
+
+				<SearchableSetting
+					settingId="context-openproject-git-access-key"
+					section="contextManagement"
+					label={t("settings:contextManagement.openProject.gitAccessKey.label")}>
+					<span className="block font-medium mb-1">
+						{t("settings:contextManagement.openProject.gitAccessKey.label")}
+					</span>
+					<Input
+						type="password"
+						className="w-full bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border px-2 py-1 rounded"
+						value={gitAccessKey ?? ""}
+						placeholder={t("settings:contextManagement.openProject.gitAccessKey.placeholder")}
+						onChange={(e) => setCachedStateField("gitAccessKey", e.target.value)}
+						data-testid="openproject-git-access-key-input"
+					/>
+					<div className="text-vscode-descriptionForeground text-sm mt-1">
+						{t("settings:contextManagement.openProject.gitAccessKey.description")}
+					</div>
+				</SearchableSetting>
+
+				<SearchableSetting
+					settingId="context-openproject-user"
+					section="contextManagement"
+					label={t("settings:contextManagement.openProject.user.label")}>
+					<span className="block font-medium mb-1">
+						{t("settings:contextManagement.openProject.user.label")}
+					</span>
+					<Input
+						type="text"
+						className="w-full bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border px-2 py-1 rounded"
+						value={openProjectUserIdOrMe ?? ""}
+						placeholder={t("settings:contextManagement.openProject.user.placeholder")}
+						onChange={(e) => setCachedStateField("openProjectUserIdOrMe", e.target.value)}
+						data-testid="openproject-user-input"
+					/>
+					<div className="text-vscode-descriptionForeground text-sm mt-1">
+						{t("settings:contextManagement.openProject.user.description")}
+					</div>
+				</SearchableSetting>
+
+				<SearchableSetting
+					settingId="context-openproject-poll-interval"
+					section="contextManagement"
+					label={t("settings:contextManagement.openProject.pollInterval.label")}>
+					<span className="block font-medium mb-1">
+						{t("settings:contextManagement.openProject.pollInterval.label")}
+					</span>
+					<div className="flex items-center gap-4">
+						<Input
+							type="number"
+							pattern="[0-9]*"
+							className="w-24 bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border px-2 py-1 rounded text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+							value={openProjectPollIntervalMinutes ?? 5}
+							min={1}
+							max={120}
+							onChange={(e) => {
+								const newValue = parseInt(e.target.value, 10)
+								if (!isNaN(newValue) && newValue >= 1 && newValue <= 120) {
+									setCachedStateField("openProjectPollIntervalMinutes", newValue)
+								}
+							}}
+							onClick={(e) => e.currentTarget.select()}
+							data-testid="openproject-poll-interval-input"
+						/>
+						<span>{t("settings:contextManagement.openProject.pollInterval.minutes")}</span>
+					</div>
+					<div className="text-vscode-descriptionForeground text-sm mt-2">
+						{t("settings:contextManagement.openProject.pollInterval.description")}
 					</div>
 				</SearchableSetting>
 			</Section>

@@ -1,4 +1,4 @@
-import { memo } from "react"
+import { memo, useMemo } from "react"
 import { ArrowRight, Folder } from "lucide-react"
 import type { DisplayHistoryItem } from "./types"
 
@@ -42,6 +42,10 @@ const TaskItem = ({
 
 	const isCompact = variant === "compact"
 
+	const isOpenProjectTask = useMemo(() => {
+		return typeof item.task === "string" && item.task.startsWith("[OpenProject")
+	}, [item.task])
+
 	return (
 		<div
 			key={item.id}
@@ -84,18 +88,25 @@ const TaskItem = ({
 								dangerouslySetInnerHTML={{ __html: item.highlight }}
 							/>
 						) : (
-							<div
-								className={cn(
-									"flex-1 min-w-0 overflow-hidden whitespace-pre-wrap font-light text-ellipsis line-clamp-3",
-									{
-										"text-base": !isCompact,
-									},
-									!isCompact && isSelectionMode ? "mb-1" : "",
+							<div className="flex items-start gap-1 flex-1 min-w-0">
+								{isOpenProjectTask && (
+									<span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-vscode-badge-background text-vscode-badge-foreground uppercase tracking-wide">
+										OpenProject
+									</span>
 								)}
-								data-testid="task-content">
-								<StandardTooltip content={item.task}>
-									<span>{item.task}</span>
-								</StandardTooltip>
+								<div
+									className={cn(
+										"flex-1 min-w-0 overflow-hidden whitespace-pre-wrap font-light text-ellipsis line-clamp-3",
+										{
+											"text-base": !isCompact,
+										},
+										!isCompact && isSelectionMode ? "mb-1" : "",
+									)}
+									data-testid="task-content">
+									<StandardTooltip content={item.task}>
+										<span>{item.task}</span>
+									</StandardTooltip>
+								</div>
 							</div>
 						)}
 						{/* Arrow icon that appears on hover */}

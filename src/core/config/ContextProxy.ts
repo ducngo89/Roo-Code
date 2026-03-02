@@ -7,6 +7,10 @@ import {
 	SECRET_STATE_KEYS,
 	GLOBAL_STATE_KEYS,
 	GLOBAL_SECRET_KEYS,
+	WORKSPACE_STATE_KEYS,
+	WORKSPACE_SECRET_KEYS,
+	isWorkspaceStateKey,
+	isWorkspaceSecretKey,
 	type ProviderSettings,
 	type GlobalSettings,
 	type SecretState,
@@ -42,17 +46,23 @@ export class ContextProxy {
 
 	private stateCache: GlobalState
 	private secretCache: SecretState
+	private workspaceStateCache: Partial<Record<string, unknown>> = {}
 	private _isInitialized = false
 
 	constructor(context: vscode.ExtensionContext) {
 		this.originalContext = context
 		this.stateCache = {}
 		this.secretCache = {}
+		this.workspaceStateCache = {}
 		this._isInitialized = false
 	}
 
 	public get isInitialized() {
 		return this._isInitialized
+	}
+
+	private getWorkspaceId(): string {
+		return vscode.workspace.workspaceFolders?.[0]?.uri.toString(true) ?? "no-workspace"
 	}
 
 	public async initialize() {
@@ -99,6 +109,16 @@ export class ContextProxy {
 
 		// Migration: Clear old default condensing prompt so users get the improved v2 default
 		await this.migrateOldDefaultCondensingPrompt()
+
+		// Load workspace non-secret state
+		for (const key of WORKSPACE_STATE_KEYS) {
+			this.workspaceStateCache[key] = this.originalContext.workspaceState.get(key)
+		}
+		// Load workspace secrets (using workspace URI prefix)
+		const workspaceId = this.getWorkspaceId()
+		for (const key of WORKSPACE_SECRET_KEYS) {
+			this.workspaceStateCache[key] = await this.originalContext.secrets.get(`${workspaceId}:${key}`)
+		}
 
 		this._isInitialized = true
 	}
@@ -501,12 +521,26 @@ export class ContextProxy {
 	 */
 
 	public async setValue<K extends RooCodeSettingsKey>(key: K, value: RooCodeSettings[K]) {
+		if (isWorkspaceSecretKey(key)) {
+			this.workspaceStateCache[key] = value
+			const prefixedKey = `${this.getWorkspaceId()}:${key}`
+			if (value === undefined || value === null || value === "") {
+				return this.originalContext.secrets.delete(prefixedKey)
+			}
+			return this.originalContext.secrets.store(prefixedKey, value as string)
+		} else if (isWorkspaceStateKey(key)) {
+			this.workspaceStateCache[key] = value
+			return this.originalContext.workspaceState.update(key, value)
+		}
 		return isSecretStateKey(key)
 			? this.storeSecret(key as SecretStateKey, value as string)
 			: this.updateGlobalState(key as GlobalStateKey, value)
 	}
 
 	public getValue<K extends RooCodeSettingsKey>(key: K): RooCodeSettings[K] {
+		if (isWorkspaceSecretKey(key) || isWorkspaceStateKey(key)) {
+			return this.workspaceStateCache[key] as RooCodeSettings[K]
+		}
 		return isSecretStateKey(key)
 			? (this.getSecret(key as SecretStateKey) as RooCodeSettings[K])
 			: (this.getGlobalState(key as GlobalStateKey) as RooCodeSettings[K])
@@ -516,8 +550,8 @@ export class ContextProxy {
 		const globalState = this.getAllGlobalState()
 		const secretState = this.getAllSecretState()
 
-		// Simply merge all states - no nested secrets to handle
-		return { ...globalState, ...secretState }
+		// Merge all states — workspace values override global values
+		return { ...globalState, ...secretState, ...this.workspaceStateCache } as RooCodeSettings
 	}
 
 	public async setValues(values: RooCodeSettings) {
@@ -555,11 +589,15 @@ export class ContextProxy {
 		// Clear in-memory caches
 		this.stateCache = {}
 		this.secretCache = {}
+		this.workspaceStateCache = {}
 
+		const workspaceId = this.getWorkspaceId()
 		await Promise.all([
 			...GLOBAL_STATE_KEYS.map((key) => this.originalContext.globalState.update(key, undefined)),
 			...SECRET_STATE_KEYS.map((key) => this.originalContext.secrets.delete(key)),
 			...GLOBAL_SECRET_KEYS.map((key) => this.originalContext.secrets.delete(key)),
+			...WORKSPACE_STATE_KEYS.map((key) => this.originalContext.workspaceState.update(key, undefined)),
+			...WORKSPACE_SECRET_KEYS.map((key) => this.originalContext.secrets.delete(`${workspaceId}:${key}`)),
 		])
 
 		await this.initialize()

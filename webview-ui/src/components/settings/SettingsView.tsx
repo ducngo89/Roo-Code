@@ -203,6 +203,12 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		includeCurrentTime,
 		includeCurrentCost,
 		maxGitStatusFiles,
+		openProjectEnabled,
+		openProjectBaseUrl,
+		openProjectApiToken,
+		openProjectUserIdOrMe,
+		openProjectPollIntervalMinutes,
+		gitAccessKey,
 	} = cachedState
 
 	const apiConfiguration = useMemo(() => cachedState.apiConfiguration ?? {}, [cachedState.apiConfiguration])
@@ -360,6 +366,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 
 	const handleSubmit = () => {
 		if (isSettingValid) {
+			// First, persist VS Code global settings
 			vscode.postMessage({
 				type: "updateSettings",
 				updatedSettings: {
@@ -417,6 +424,14 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					includeCurrentCost: includeCurrentCost ?? true,
 					maxGitStatusFiles: maxGitStatusFiles ?? 0,
 					profileThresholds,
+					// Persist OpenProject settings locally so they are available
+					// even when Roo Cloud is not configured.
+					openProjectEnabled,
+					openProjectBaseUrl,
+					openProjectApiToken,
+					openProjectUserIdOrMe,
+					openProjectPollIntervalMinutes,
+					gitAccessKey,
 					imageGenerationProvider,
 					openRouterImageApiKey,
 					openRouterImageGenerationSelectedModel,
@@ -835,6 +850,12 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 								maxWorkspaceFiles={maxWorkspaceFiles ?? 200}
 								showRooIgnoredFiles={showRooIgnoredFiles}
 								enableSubfolderRules={enableSubfolderRules}
+								openProjectEnabled={openProjectEnabled}
+								openProjectBaseUrl={openProjectBaseUrl}
+								openProjectApiToken={openProjectApiToken}
+								openProjectUserIdOrMe={openProjectUserIdOrMe}
+								openProjectPollIntervalMinutes={openProjectPollIntervalMinutes}
+								gitAccessKey={gitAccessKey}
 								maxImageFileSize={maxImageFileSize}
 								maxTotalImageSize={maxTotalImageSize}
 								profileThresholds={profileThresholds}

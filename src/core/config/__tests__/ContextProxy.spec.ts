@@ -2,7 +2,7 @@
 
 import * as vscode from "vscode"
 
-import { GLOBAL_STATE_KEYS, SECRET_STATE_KEYS, GLOBAL_SECRET_KEYS } from "@roo-code/types"
+import { GLOBAL_STATE_KEYS, SECRET_STATE_KEYS, GLOBAL_SECRET_KEYS, WORKSPACE_SECRET_KEYS } from "@roo-code/types"
 
 import { ContextProxy } from "../ContextProxy"
 
@@ -14,6 +14,15 @@ vi.mock("vscode", () => ({
 		Development: 1,
 		Production: 2,
 		Test: 3,
+	},
+	workspace: {
+		workspaceFolders: [
+			{
+				uri: {
+					toString: () => "file:///test/workspace",
+				},
+			},
+		],
 	},
 }))
 
@@ -40,9 +49,16 @@ describe("ContextProxy", () => {
 			delete: vi.fn().mockResolvedValue(undefined),
 		}
 
+		// Mock workspaceState
+		const mockWorkspaceState = {
+			get: vi.fn(),
+			update: vi.fn().mockResolvedValue(undefined),
+		}
+
 		// Mock the extension context
 		mockContext = {
 			globalState: mockGlobalState,
+			workspaceState: mockWorkspaceState,
 			secrets: mockSecrets,
 			extensionUri: { path: "/test/extension" },
 			extensionPath: "/test/extension",
@@ -85,12 +101,15 @@ describe("ContextProxy", () => {
 		})
 
 		it("should initialize secret cache with all secret keys", () => {
-			expect(mockSecrets.get).toHaveBeenCalledTimes(SECRET_STATE_KEYS.length + GLOBAL_SECRET_KEYS.length)
+			// SECRET_STATE_KEYS + GLOBAL_SECRET_KEYS (unprefixed) + WORKSPACE_SECRET_KEYS (prefixed)
 			for (const key of SECRET_STATE_KEYS) {
 				expect(mockSecrets.get).toHaveBeenCalledWith(key)
 			}
 			for (const key of GLOBAL_SECRET_KEYS) {
 				expect(mockSecrets.get).toHaveBeenCalledWith(key)
+			}
+			for (const key of WORKSPACE_SECRET_KEYS) {
+				expect(mockSecrets.get).toHaveBeenCalledWith(`file:///test/workspace:${key}`)
 			}
 		})
 	})
@@ -104,7 +123,8 @@ describe("ContextProxy", () => {
 			const result = proxy.getGlobalState("apiProvider")
 			expect(result).toBe("deepseek")
 
-			// Original context should be called once during updateGlobalState (+3 for migration checks)
+			// Original context should be called once during updateGlobalState
+			// (+3 for migration checks)
 			expect(mockGlobalState.get).toHaveBeenCalledTimes(GLOBAL_STATE_KEYS.length + 3) // From initialization + migration checks
 		})
 
@@ -417,9 +437,10 @@ describe("ContextProxy", () => {
 			for (const key of GLOBAL_SECRET_KEYS) {
 				expect(mockSecrets.delete).toHaveBeenCalledWith(key)
 			}
-
-			// Total calls should equal the number of secret keys
-			expect(mockSecrets.delete).toHaveBeenCalledTimes(SECRET_STATE_KEYS.length + GLOBAL_SECRET_KEYS.length)
+			// Workspace secrets are deleted with workspace URI prefix
+			for (const key of WORKSPACE_SECRET_KEYS) {
+				expect(mockSecrets.delete).toHaveBeenCalledWith(`file:///test/workspace:${key}`)
+			}
 		})
 
 		it("should reinitialize caches after reset", async () => {
