@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import * as vscode from "vscode"
 
-import { OpenProjectService } from "../OpenProjectService"
+import { OpenProjectService, type OpenProjectClientConfig, type OpenProjectTask } from "../OpenProjectService"
+import type { ClineProvider } from "../../../core/webview/ClineProvider"
 import { OpenProjectTaskSync } from "../OpenProjectTaskSync"
 
 declare const global: any
@@ -169,6 +170,38 @@ describe("OpenProjectService", () => {
 		} finally {
 			global.fetch = originalFetch
 		}
+	})
+
+	it("should fetch single work package status", async () => {
+		const statusResponse = {
+			_embedded: {
+				status: { name: "In Progress" },
+			},
+			_links: {
+				status: { href: "/api/v3/statuses/7" },
+			},
+		}
+
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: "OK",
+			json: () => Promise.resolve(statusResponse),
+		})
+
+		const originalFetch = global.fetch
+		global.fetch = fetchMock
+
+		const service = new OpenProjectService()
+		const status = await service.fetchWorkPackageStatus(
+			{ baseUrl: "https://openproject.example.com", apiToken: "token", userIdOrMe: "me" },
+			42,
+		)
+
+		expect(status.statusId).toBe(7)
+		expect(status.statusName).toBe("In Progress")
+
+		global.fetch = originalFetch
 	})
 
 	it("should prefer top-level customField3.title over _links.customField3.title for gitRepoUrl", async () => {
@@ -392,6 +425,58 @@ describe("OpenProjectService", () => {
 			}
 		})
 	})
+
+	describe("addComment", () => {
+		it("should POST a comment on the work package", async () => {
+			const originalFetch = global.fetch
+			try {
+				global.fetch = vi.fn().mockResolvedValue({
+					ok: true,
+					json: async () => ({}),
+				})
+
+				const service = new OpenProjectService(log)
+				await service.addComment(
+					{ baseUrl: "https://op.example.com", apiToken: "test-token", userIdOrMe: "me" },
+					42,
+					"This is a progress update",
+				)
+
+				expect(global.fetch).toHaveBeenCalledTimes(1)
+				const [url, options] = (global.fetch as any).mock.calls[0]
+				expect(url).toBe("https://op.example.com/api/v3/work_packages/42/activities")
+				expect(options.method).toBe("POST")
+				expect(options.headers["Content-Type"]).toBe("application/json")
+				const body = JSON.parse(options.body)
+				expect(body.comment.raw).toBe("This is a progress update")
+			} finally {
+				global.fetch = originalFetch
+			}
+		})
+
+		it("should throw when the API returns a non-ok response", async () => {
+			const originalFetch = global.fetch
+			try {
+				global.fetch = vi.fn().mockResolvedValue({
+					ok: false,
+					status: 403,
+					statusText: "Forbidden",
+					text: async () => "Not allowed",
+				})
+
+				const service = new OpenProjectService(log)
+				await expect(
+					service.addComment(
+						{ baseUrl: "https://op.example.com", apiToken: "test-token", userIdOrMe: "me" },
+						42,
+						"Test comment",
+					),
+				).rejects.toThrow("Failed to post comment on work package 42: 403 Forbidden")
+			} finally {
+				global.fetch = originalFetch
+			}
+		})
+	})
 })
 
 describe("OpenProjectTaskSync", () => {
@@ -610,6 +695,182 @@ describe("OpenProjectTaskSync", () => {
 		expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(1)
 		expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("OpenProject: Found 1 new task")
 
+		sync.dispose()
+	})
+
+	const clientConfig: OpenProjectClientConfig = {
+		baseUrl: "https://openproject.example.com",
+		apiToken: "token",
+		userIdOrMe: "me",
+	}
+
+	const monitoredTask: OpenProjectTask = {
+		id: 777,
+		subject: "Monitored task",
+		description: "Monitor me",
+		url: "https://example.com/api/v3/work_packages/777",
+	}
+
+	const createMonitorSync = (
+		overrides: Partial<OpenProjectService> = {},
+		providerOverrides: Partial<ClineProvider> = {},
+	) => {
+		const provider: Partial<ClineProvider> = {
+			getCurrentTask: vi.fn().mockReturnValue({ taskId: "monitor", clineMessages: [], todoList: undefined }),
+			cancelTask: vi.fn().mockResolvedValue(undefined),
+			log: vi.fn(),
+			...providerOverrides,
+		}
+		const service: Partial<OpenProjectService> = {
+			fetchAssignedOpenTasks: vi.fn().mockResolvedValue([]),
+			updateWorkPackageStatus: vi.fn().mockResolvedValue(undefined),
+			fetchWorkPackageStatus: vi.fn().mockResolvedValue({ statusId: 7, statusName: "In Progress" }),
+			addComment: vi.fn().mockResolvedValue(undefined),
+			...overrides,
+		}
+		return {
+			sync: new OpenProjectTaskSync({
+				provider: provider as ClineProvider,
+				service: service as OpenProjectService,
+				log: vi.fn(),
+			}),
+			provider: provider as ClineProvider,
+			service: service as OpenProjectService,
+		}
+	}
+
+	it("continues monitoring while status remains In Progress", async () => {
+		const { sync, service, provider } = createMonitorSync()
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		expect(vi.mocked(service.fetchWorkPackageStatus)).toHaveBeenCalledTimes(1)
+		expect(provider.cancelTask).not.toHaveBeenCalled()
+		sync.dispose()
+	})
+
+	it("cancels Roo task when work package leaves In Progress", async () => {
+		const { sync, service, provider } = createMonitorSync({
+			fetchWorkPackageStatus: vi.fn().mockResolvedValue({ statusId: 12, statusName: "Ready" }),
+		})
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		expect(provider.cancelTask).toHaveBeenCalledTimes(1)
+		expect(vi.mocked(service.updateWorkPackageStatus)).toHaveBeenCalledWith(clientConfig, monitoredTask.id, 14)
+		expect(mockStatusBarItem.text).toContain("WP #777 on hold")
+		sync.dispose()
+	})
+
+	it("stops monitoring and updates to Developed when Roo task completes naturally", async () => {
+		const { sync, service } = createMonitorSync({}, { getCurrentTask: vi.fn().mockReturnValue(undefined) })
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		expect(vi.mocked(service.fetchWorkPackageStatus)).not.toHaveBeenCalled()
+		expect(vi.mocked(service.updateWorkPackageStatus)).toHaveBeenCalledWith(clientConfig, monitoredTask.id, 8)
+		expect(vi.mocked(service.addComment)).toHaveBeenCalledTimes(1)
+		expect(vi.mocked(service.addComment).mock.calls[0][2]).toContain("completed")
+		expect(mockStatusBarItem.text).toContain("WP #777 developed")
+		expect(sync["statusMonitorTaskId"]).toBeNull()
+		sync.dispose()
+	})
+
+	it("does NOT update to Developed when Roo task was cancelled by monitor", async () => {
+		// First call: status changes → cancel + on hold
+		const fetchStatus = vi.fn().mockResolvedValue({ statusId: 12, statusName: "Ready" })
+		const getCurrentTask = vi
+			.fn()
+			.mockReturnValueOnce({ taskId: "monitor", clineMessages: [], todoList: undefined }) // first call: active
+			.mockReturnValueOnce({ taskId: "monitor", clineMessages: [], todoList: undefined }) // cancelRooTask check
+			.mockReturnValue(undefined) // after cancel: no longer active
+
+		const { sync, service } = createMonitorSync(
+			{ fetchWorkPackageStatus: fetchStatus },
+			{ getCurrentTask, cancelTask: vi.fn().mockResolvedValue(undefined), log: vi.fn() },
+		)
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		// Should have set On Hold (14), NOT Developed (8)
+		expect(vi.mocked(service.updateWorkPackageStatus)).toHaveBeenCalledWith(clientConfig, monitoredTask.id, 14)
+		expect(vi.mocked(service.updateWorkPackageStatus)).not.toHaveBeenCalledWith(clientConfig, monitoredTask.id, 8)
+		sync.dispose()
+	})
+
+	it("gives up after consecutive polling errors", async () => {
+		const errorFetch = vi.fn().mockRejectedValue(new Error("Network"))
+		const { sync } = createMonitorSync({ fetchWorkPackageStatus: errorFetch })
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		expect(sync["statusMonitorTaskId"]).toBeNull()
+		sync.dispose()
+	})
+
+	it("posts progress comment when there are new assistant messages", async () => {
+		const clineMessages = [
+			{ type: "say", say: "text", text: "Analyzing the codebase..." },
+			{ type: "say", say: "text", text: "Found the issue in the config file" },
+		]
+		const { sync, service } = createMonitorSync(
+			{},
+			{ getCurrentTask: vi.fn().mockReturnValue({ taskId: "monitor", clineMessages, todoList: undefined }) },
+		)
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		expect(vi.mocked(service.addComment)).toHaveBeenCalledTimes(1)
+		const commentText = vi.mocked(service.addComment).mock.calls[0][2]
+		expect(commentText).toContain("Roo Agent Progress Update")
+		expect(commentText).toContain("Found the issue")
+		expect(commentText).toContain("Agent is still running")
+		sync.dispose()
+	})
+
+	it("does NOT post progress comment when there are no new messages since last", async () => {
+		const clineMessages = [{ type: "say", say: "text", text: "Hello" }]
+		const { sync, service } = createMonitorSync(
+			{},
+			{ getCurrentTask: vi.fn().mockReturnValue({ taskId: "monitor", clineMessages, todoList: undefined }) },
+		)
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+		;(sync as any).lastCommentedMessageCount = 1 // already saw 1 message
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		expect(vi.mocked(service.addComment)).not.toHaveBeenCalled()
+		sync.dispose()
+	})
+
+	it("includes todo list items in progress comment", async () => {
+		const clineMessages = [{ type: "say", say: "text", text: "Working on it..." }]
+		const todoList = [
+			{ id: "1", content: "Clone repository", status: "completed" },
+			{ id: "2", content: "Fix the bug", status: "in_progress" },
+			{ id: "3", content: "Write tests", status: "pending" },
+		]
+		const { sync, service } = createMonitorSync(
+			{},
+			{ getCurrentTask: vi.fn().mockReturnValue({ taskId: "monitor", clineMessages, todoList }) },
+		)
+		;(sync as any).statusMonitorTaskId = monitoredTask.id
+
+		await (sync as any).checkWorkPackageStatus(monitoredTask, clientConfig)
+
+		expect(vi.mocked(service.addComment)).toHaveBeenCalledTimes(1)
+		const commentText = vi.mocked(service.addComment).mock.calls[0][2]
+		expect(commentText).toContain("✅ Clone repository")
+		expect(commentText).toContain("🔄 Fix the bug")
+		expect(commentText).toContain("⬜ Write tests")
 		sync.dispose()
 	})
 

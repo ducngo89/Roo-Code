@@ -19,6 +19,11 @@ export interface OpenProjectTaskSyncConfig {
 }
 
 const DEFAULT_POLL_INTERVAL_MINUTES = 10
+const STATUS_IN_PROGRESS = 7
+const STATUS_ON_HOLD = 14
+const STATUS_DEVELOPED = 8
+const STATUS_MONITOR_INTERVAL_MS = 60_000
+const STATUS_MONITOR_MAX_CONSECUTIVE_ERRORS = 3
 
 export class OpenProjectTaskSync {
 	private readonly provider: ClineProvider
@@ -27,8 +32,14 @@ export class OpenProjectTaskSync {
 
 	private timer: ReturnType<typeof setInterval> | null = null
 	private isPolling = false
-	private knownTaskIds = new Set<number>()
 	private statusBarItem: vscode.StatusBarItem
+
+	private statusMonitorTimer: ReturnType<typeof setInterval> | null = null
+	private statusMonitorTaskId: number | null = null
+	private isStatusMonitorChecking = false
+	private consecutiveStatusMonitorErrors = 0
+	private wasTaskCancelled = false
+	private lastCommentedMessageCount = 0
 
 	private config: OpenProjectTaskSyncConfig = {
 		enabled: false,
@@ -298,13 +309,6 @@ export class OpenProjectTaskSync {
 	}
 
 	private async handleTask(task: OpenProjectTask, clientConfig: OpenProjectClientConfig): Promise<boolean> {
-		if (this.knownTaskIds.has(task.id)) {
-			this.log(`[OpenProjectTaskSync] handleTask() — task #${task.id} already in knownTaskIds, skipping`)
-			return false
-		}
-
-		this.knownTaskIds.add(task.id)
-
 		this.log(
 			`[OpenProjectTaskSync] handleTask() — task #${task.id}: gitRepoUrl=${task.gitRepoUrl ?? "(undefined)"}`,
 		)
@@ -320,7 +324,6 @@ export class OpenProjectTaskSync {
 				this.log(`[OpenProjectTaskSync] Failed to clone repo for task #${task.id}: ${cloneErrorMessage}`)
 				vscode.window.showErrorMessage(`OpenProject Git Clone Error: ${cloneErrorMessage}`)
 				// Do not mark task as processed so it can be retried
-				this.knownTaskIds.delete(task.id)
 				return false
 			}
 		} else {
@@ -336,13 +339,15 @@ export class OpenProjectTaskSync {
 
 			// Update the work package status to "In Progress" (status ID 7) after successful Roo task creation.
 			try {
-				await this.service.updateWorkPackageStatus(clientConfig, task.id, 7) // 7 = "In Progress"
+				await this.service.updateWorkPackageStatus(clientConfig, task.id, STATUS_IN_PROGRESS)
 				this.log(`[OpenProjectTaskSync] Updated OpenProject task #${task.id} status to In Progress`)
 			} catch (statusError) {
 				this.log(
 					`[OpenProjectTaskSync] Warning: Failed to update status for task #${task.id}: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
 				)
 			}
+
+			this.startStatusMonitor(task, clientConfig)
 		} catch (error) {
 			this.log(
 				`[OpenProjectTaskSync] Failed to create Roo task for OpenProject work package ${task.id}:`,
@@ -352,6 +357,243 @@ export class OpenProjectTaskSync {
 		}
 
 		return true
+	}
+
+	private startStatusMonitor(task: OpenProjectTask, clientConfig: OpenProjectClientConfig): void {
+		if (this.statusMonitorTaskId && this.statusMonitorTaskId !== task.id) {
+			this.log(
+				`[OpenProjectTaskSync] Status monitor already running for WP #${this.statusMonitorTaskId}; skipping monitor for #${task.id}`,
+			)
+			return
+		}
+
+		if (this.statusMonitorTimer) {
+			this.stopStatusMonitor()
+		}
+
+		this.wasTaskCancelled = false
+		this.statusMonitorTaskId = task.id
+		this.statusMonitorTimer = setInterval(() => {
+			void this.checkWorkPackageStatus(task, clientConfig)
+		}, STATUS_MONITOR_INTERVAL_MS)
+		this.log(`[OpenProjectTaskSync] Started status monitor for OpenProject WP #${task.id}`)
+		void this.checkWorkPackageStatus(task, clientConfig)
+	}
+
+	private stopStatusMonitor(): void {
+		if (this.statusMonitorTimer) {
+			clearInterval(this.statusMonitorTimer)
+			this.statusMonitorTimer = null
+		}
+		this.statusMonitorTaskId = null
+		this.isStatusMonitorChecking = false
+		this.consecutiveStatusMonitorErrors = 0
+		this.lastCommentedMessageCount = 0
+		this.wasTaskCancelled = false
+	}
+
+	private async checkWorkPackageStatus(task: OpenProjectTask, clientConfig: OpenProjectClientConfig): Promise<void> {
+		if (this.statusMonitorTaskId !== task.id) {
+			return
+		}
+
+		if (this.isStatusMonitorChecking) {
+			this.log(`[OpenProjectTaskSync] Status monitor already checking for WP #${task.id}`)
+			return
+		}
+
+		this.isStatusMonitorChecking = true
+
+		try {
+			const currentRooTask = this.provider.getCurrentTask()
+			if (!currentRooTask) {
+				this.log(`[OpenProjectTaskSync] Roo task for WP #${task.id} is no longer active`)
+
+				// Task completed naturally (not cancelled by us)
+				if (!this.wasTaskCancelled) {
+					this.log(
+						`[OpenProjectTaskSync] Roo task completed successfully; updating WP #${task.id} to Developed`,
+					)
+
+					try {
+						await this.service.updateWorkPackageStatus(clientConfig, task.id, STATUS_DEVELOPED)
+						this.log(
+							`[OpenProjectTaskSync] Set OpenProject WP #${task.id} to Developed (ID ${STATUS_DEVELOPED})`,
+						)
+					} catch (statusError) {
+						this.log(
+							`[OpenProjectTaskSync] Warning: Failed to set WP #${task.id} to Developed: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
+						)
+					}
+
+					try {
+						await this.service.addComment(
+							clientConfig,
+							task.id,
+							`✅ Roo agent completed task successfully.\nWork package has been moved to **Developed**.`,
+						)
+					} catch (commentError) {
+						this.log(
+							`[OpenProjectTaskSync] Warning: Failed to post completion comment on WP #${task.id}: ${commentError instanceof Error ? commentError.message : String(commentError)}`,
+						)
+					}
+
+					this.statusBarItem.text = `$(check) OpenProject: WP #${task.id} developed`
+					this.statusBarItem.tooltip = `Task completed — work package moved to Developed`
+					this.statusBarItem.show()
+				}
+
+				this.stopStatusMonitor()
+				return
+			}
+
+			// Post progress comment if there are new messages since the last comment
+			await this.postProgressComment(task, clientConfig, currentRooTask)
+
+			const { statusId, statusName } = await this.service.fetchWorkPackageStatus(clientConfig, task.id)
+			this.consecutiveStatusMonitorErrors = 0
+
+			if (statusId === STATUS_IN_PROGRESS) {
+				this.log(`[OpenProjectTaskSync] WP #${task.id} still In Progress (${statusName})`)
+				return
+			}
+
+			this.log(
+				`[OpenProjectTaskSync] WP #${task.id} status changed to ${statusName} (ID ${statusId}); cancelling Roo task`,
+			)
+			this.wasTaskCancelled = true
+			await this.cancelRooTask(task, statusName)
+
+			try {
+				await this.service.updateWorkPackageStatus(clientConfig, task.id, STATUS_ON_HOLD)
+				this.log(`[OpenProjectTaskSync] Set OpenProject WP #${task.id} to On Hold`)
+			} catch (statusError) {
+				this.log(
+					`[OpenProjectTaskSync] Warning: Failed to set WP #${task.id} to On Hold: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
+				)
+			}
+
+			this.statusBarItem.text = `$(circle-slash) OpenProject: WP #${task.id} on hold`
+			this.statusBarItem.tooltip = `Work package status changed to ${statusName}`
+			this.statusBarItem.show()
+
+			this.stopStatusMonitor()
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error)
+			this.consecutiveStatusMonitorErrors += 1
+			this.log(
+				`[OpenProjectTaskSync] Error polling status for WP #${task.id} (attempt ${this.consecutiveStatusMonitorErrors}): ${errorMessage}`,
+			)
+			if (this.consecutiveStatusMonitorErrors >= STATUS_MONITOR_MAX_CONSECUTIVE_ERRORS) {
+				this.log(
+					`[OpenProjectTaskSync] Giving up on status monitor for WP #${task.id} after ${this.consecutiveStatusMonitorErrors} errors`,
+				)
+				this.stopStatusMonitor()
+			}
+		} finally {
+			this.isStatusMonitorChecking = false
+		}
+	}
+
+	/**
+	 * Post a progress comment to the OpenProject work package summarizing
+	 * what the Roo agent is currently doing. Extracts the latest assistant
+	 * messages from the Roo task's clineMessages.
+	 */
+	private async postProgressComment(
+		task: OpenProjectTask,
+		clientConfig: OpenProjectClientConfig,
+		rooTask: {
+			clineMessages?: Array<{ type?: string; say?: string; text?: string }>
+			todoList?: Array<{ status: string; id: string; content: string }>
+		},
+	): Promise<void> {
+		try {
+			const messages = rooTask.clineMessages ?? []
+			const currentCount = messages.length
+
+			// Only comment if there are new messages since last time
+			if (currentCount <= this.lastCommentedMessageCount) {
+				this.log(`[OpenProjectTaskSync] No new messages since last comment for WP #${task.id}`)
+				return
+			}
+
+			// Collect the latest assistant "say" messages since last comment
+			const newMessages = messages.slice(this.lastCommentedMessageCount)
+			const assistantTexts: string[] = []
+
+			for (const msg of newMessages) {
+				if (msg.type === "say" && msg.say === "text" && msg.text) {
+					// Truncate very long messages
+					const truncated = msg.text.length > 300 ? msg.text.slice(0, 300) + "…" : msg.text
+					assistantTexts.push(truncated)
+				}
+			}
+
+			if (assistantTexts.length === 0) {
+				// No meaningful text messages, just update the counter
+				this.lastCommentedMessageCount = currentCount
+				return
+			}
+
+			// Build a progress comment
+			const lines: string[] = []
+			lines.push(`🤖 **Roo Agent Progress Update**`)
+			lines.push("")
+
+			// Include todo list if available
+			const todoList = rooTask.todoList
+			if (todoList && todoList.length > 0) {
+				lines.push("**Task checklist:**")
+				for (const item of todoList) {
+					const check = item.status === "completed" ? "✅" : item.status === "in_progress" ? "🔄" : "⬜"
+					lines.push(`${check} ${item.content}`)
+				}
+				lines.push("")
+			}
+
+			lines.push("**Recent activity:**")
+			// Show at most the last 3 assistant messages to keep comments concise
+			const recentTexts = assistantTexts.slice(-3)
+			for (const text of recentTexts) {
+				lines.push(`> ${text.replace(/\n/g, "\n> ")}`)
+				lines.push("")
+			}
+
+			lines.push(`_Agent is still running…_`)
+
+			const comment = lines.join("\n")
+
+			await this.service.addComment(clientConfig, task.id, comment)
+			this.log(`[OpenProjectTaskSync] Posted progress comment on WP #${task.id}`)
+			this.lastCommentedMessageCount = currentCount
+		} catch (error) {
+			// Non-critical — don't let comment failures break the monitor
+			this.log(
+				`[OpenProjectTaskSync] Warning: Failed to post progress comment on WP #${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+			)
+		}
+	}
+
+	private async cancelRooTask(task: OpenProjectTask, statusName: string): Promise<void> {
+		const currentRooTask = this.provider.getCurrentTask()
+		if (!currentRooTask) {
+			this.log(`[OpenProjectTaskSync] cancelRooTask(): no active Roo task for WP #${task.id}`)
+			return
+		}
+
+		try {
+			await this.provider.cancelTask()
+			const humanStatus = statusName || "<unknown>"
+			vscode.window.showInformationMessage(
+				`OpenProject: Work package #${task.id} changed status to ${humanStatus}, cancelling Roo task and putting it on hold`,
+			)
+			this.log(`[OpenProjectTaskSync] Roo task for WP #${task.id} cancelled via status monitor`)
+		} catch (error) {
+			this.log(
+				`[OpenProjectTaskSync] Failed to cancel Roo task for WP #${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+			)
+		}
 	}
 
 	/**
@@ -398,7 +640,7 @@ export class OpenProjectTaskSync {
 			clearInterval(this.timer)
 			this.timer = null
 		}
-		this.knownTaskIds.clear()
+		this.stopStatusMonitor()
 		this.statusBarItem.dispose()
 	}
 }

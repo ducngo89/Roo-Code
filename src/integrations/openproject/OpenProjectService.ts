@@ -228,4 +228,104 @@ export class OpenProjectService {
 			)
 		}
 	}
+
+	public async fetchWorkPackageStatus(
+		config: OpenProjectClientConfig,
+		workPackageId: number,
+	): Promise<{ statusId: number; statusName: string }> {
+		const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "")
+		const url = `${normalizedBaseUrl}/api/v3/work_packages/${workPackageId}`
+		const auth = Buffer.from(`apikey:${config.apiToken}`).toString("base64")
+		const headers = {
+			Authorization: `Basic ${auth}`,
+			Accept: "application/hal+json, application/json",
+		}
+
+		this.log(`[OpenProjectService] Fetching status for WP #${workPackageId}`)
+		const response = await fetch(url, { method: "GET", headers })
+
+		if (!response.ok) {
+			const bodyText = await response.text().catch(() => "")
+			this.log(
+				`[OpenProjectService] Failed to fetch status for WP #${workPackageId}: ${response.status} ${response.statusText} ${bodyText}`,
+			)
+			throw new Error(
+				`Failed to fetch work package ${workPackageId} status: ${response.status} ${response.statusText}${
+					bodyText ? ` - ${bodyText.slice(0, 200)}` : ""
+				}
+				`,
+			)
+		}
+
+		const data = await response.json()
+
+		const statusName =
+			data._embedded?.status?.name ??
+			data.status?.name ??
+			(typeof data.status === "string" ? data.status : "Unknown")
+
+		let statusHref: string | undefined = data._links?.status?.href ?? data._embedded?.status?._links?.self?.href
+		if (!statusHref && data.status && typeof data.status === "object") {
+			statusHref = data.status._links?.self?.href
+		}
+
+		let statusId: number | undefined
+		if (statusHref) {
+			const match = statusHref.match(/\/api\/v3\/statuses\/(\d+)/)
+			if (match && match[1]) {
+				statusId = Number(match[1])
+			}
+		}
+
+		if (!statusId && data.status && typeof data.status === "object" && typeof data.status.id === "number") {
+			statusId = data.status.id
+		}
+
+		if (typeof statusId !== "number" || Number.isNaN(statusId)) {
+			throw new Error(`Work package ${workPackageId} status response missing numeric status ID`)
+		}
+
+		this.log(`[OpenProjectService] WP #${workPackageId} statusId=${statusId}, statusName=${statusName}`)
+		return { statusId, statusName }
+	}
+
+	/**
+	 * Post a comment (activity) on a work package.
+	 * Uses the OpenProject Activities API: POST /api/v3/work_packages/:id/activities
+	 */
+	public async addComment(config: OpenProjectClientConfig, workPackageId: number, comment: string): Promise<void> {
+		const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "")
+		const url = `${normalizedBaseUrl}/api/v3/work_packages/${workPackageId}/activities`
+		const auth = Buffer.from(`apikey:${config.apiToken}`).toString("base64")
+
+		this.log(`[OpenProjectService] Posting comment to WP #${workPackageId}`)
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Basic ${auth}`,
+				"Content-Type": "application/json",
+				Accept: "application/hal+json, application/json",
+			},
+			body: JSON.stringify({
+				comment: {
+					raw: comment,
+				},
+			}),
+		})
+
+		if (!response.ok) {
+			const bodyText = await response.text().catch(() => "")
+			this.log(
+				`[OpenProjectService] Failed to post comment on WP #${workPackageId}: ${response.status} ${response.statusText} ${bodyText}`,
+			)
+			throw new Error(
+				`Failed to post comment on work package ${workPackageId}: ${response.status} ${response.statusText}${
+					bodyText ? ` - ${bodyText.slice(0, 200)}` : ""
+				}`,
+			)
+		}
+
+		this.log(`[OpenProjectService] Successfully posted comment on WP #${workPackageId}`)
+	}
 }
