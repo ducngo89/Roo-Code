@@ -9,7 +9,6 @@ export interface OpenProjectTask {
 	subject: string
 	description: string
 	status?: string
-	projectName?: string
 	url: string
 	gitRepoUrl?: string
 }
@@ -97,6 +96,21 @@ export class OpenProjectService {
 
 		const elements: any[] = data?._embedded?.elements ?? []
 
+		this.log("[OpenProjectService] Total work packages in response:", elements.length)
+
+		// Log the first work package raw structure for debugging custom field access
+		if (elements.length > 0) {
+			const firstWp = elements[0]
+			const topLevelKeys = Object.keys(firstWp).filter(
+				(k) => k.startsWith("customField") || k.startsWith("custom_field"),
+			)
+			this.log("[OpenProjectService] First WP top-level custom field keys:", JSON.stringify(topLevelKeys))
+			const linksKeys = firstWp._links
+				? Object.keys(firstWp._links).filter((k) => k.startsWith("customField") || k.startsWith("custom_field"))
+				: []
+			this.log("[OpenProjectService] First WP _links custom field keys:", JSON.stringify(linksKeys))
+		}
+
 		if (!Array.isArray(elements)) {
 			this.log("[OpenProjectService] Unexpected response shape: missing _embedded.elements array")
 			return []
@@ -108,9 +122,6 @@ export class OpenProjectService {
 			const description = wp.description?.raw ?? ""
 			const status =
 				wp._embedded?.status?.name ?? wp.status?.name ?? (typeof wp.status === "string" ? wp.status : undefined)
-			const projectName =
-				wp._embedded?.project?.name ??
-				(typeof wp.project === "object" && typeof wp.project.name === "string" ? wp.project.name : undefined)
 
 			const selfHref: string | undefined = wp._links?.self?.href
 			let url = ""
@@ -121,21 +132,36 @@ export class OpenProjectService {
 				url = normalizedBaseUrl
 			}
 
-			// Extract git repository URL from customField3.title if present.
-			const gitRepoUrl: string | undefined =
-				typeof wp.customField3?.title === "string" && wp.customField3.title.trim()
-					? wp.customField3.title.trim()
-					: undefined
+			// Log customField3 diagnostic info for every work package
+			this.log(
+				`[OpenProjectService] WP #${id} customField3 (top-level):`,
+				JSON.stringify(wp.customField3 ?? null),
+			)
+			this.log(
+				`[OpenProjectService] WP #${id} _links.customField3:`,
+				JSON.stringify(wp._links?.customField3 ?? null),
+			)
 
-			return {
+			// Extract git repository URL from customField3.title if present.
+			// Check both top-level (some API versions) and _links (HAL+JSON standard).
+			const rawGitUrl = wp.customField3?.title ?? wp._links?.customField3?.title
+			const gitRepoUrl: string | undefined =
+				typeof rawGitUrl === "string" && rawGitUrl.trim() ? rawGitUrl.trim() : undefined
+
+			this.log(`[OpenProjectService] WP #${id} extracted gitRepoUrl:`, gitRepoUrl ?? "(undefined)")
+
+			const task: OpenProjectTask = {
 				id,
 				subject,
 				description,
 				status,
-				projectName,
 				url,
 				gitRepoUrl,
 			}
+
+			this.log(`[OpenProjectService] WP #${id} final task object:`, JSON.stringify(task))
+
+			return task
 		})
 
 		return tasks
@@ -144,6 +170,9 @@ export class OpenProjectService {
 	/**
 	 * Update the status of a work package in OpenProject.
 	 * Typically used to move a task to "In Progress" (status ID 7) after pickup.
+	 *
+	 * OpenProject requires a `lockVersion` in the PATCH body to prevent concurrent
+	 * edit conflicts (HTTP 409). We fetch the current work package first to obtain it.
 	 */
 	public async updateWorkPackageStatus(
 		config: OpenProjectClientConfig,
@@ -153,14 +182,38 @@ export class OpenProjectService {
 		const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "")
 		const url = `${normalizedBaseUrl}/api/v3/work_packages/${workPackageId}`
 		const auth = Buffer.from(`apikey:${config.apiToken}`).toString("base64")
+		const authHeaders = {
+			Authorization: `Basic ${auth}`,
+			Accept: "application/hal+json, application/json",
+		}
 
+		// Step 1: GET the current work package to obtain lockVersion.
+		this.log(`[OpenProjectService] Fetching lockVersion for WP #${workPackageId}`)
+		const getResponse = await fetch(url, {
+			method: "GET",
+			headers: authHeaders,
+		})
+
+		if (!getResponse.ok) {
+			throw new Error(
+				`Failed to fetch work package ${workPackageId} for lockVersion: ${getResponse.status} ${getResponse.statusText}`,
+			)
+		}
+
+		const wpData = await getResponse.json()
+		const lockVersion = (wpData as any).lockVersion
+
+		this.log(`[OpenProjectService] WP #${workPackageId} lockVersion:`, lockVersion)
+
+		// Step 2: PATCH with the lockVersion to avoid 409 Conflict.
 		const response = await fetch(url, {
 			method: "PATCH",
 			headers: {
-				Authorization: `Basic ${auth}`,
+				...authHeaders,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
+				lockVersion,
 				_links: {
 					status: {
 						href: `/api/v3/statuses/${statusId}`,

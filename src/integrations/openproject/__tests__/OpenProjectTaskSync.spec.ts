@@ -24,7 +24,7 @@ vi.mock("vscode", () => ({
 		showInformationMessage: vi.fn(),
 		showErrorMessage: vi.fn(),
 		createStatusBarItem: vi.fn(() => mockStatusBarItem),
-		withProgress: vi.fn((_options: any, task: Function) => task({ report: vi.fn() })),
+		withProgress: vi.fn((_options: any, task: (...args: any[]) => any) => task({ report: vi.fn() })),
 	},
 	workspace: {
 		workspaceFolders: undefined,
@@ -37,10 +37,12 @@ vi.mock("child_process", () => ({
 	exec: (...args: any[]) => mockExec(...args),
 }))
 
-// Mock fs.existsSync
+// Mock fs module
 const mockExistsSync = vi.fn().mockReturnValue(false)
+const mockMkdirSync = vi.fn()
 vi.mock("fs", () => ({
 	existsSync: (...args: any[]) => mockExistsSync(...args),
+	mkdirSync: (...args: any[]) => mockMkdirSync(...args),
 }))
 
 describe("OpenProjectService", () => {
@@ -80,6 +82,7 @@ describe("OpenProjectService", () => {
 						},
 						_links: {
 							self: { href: "/api/v3/work_packages/123" },
+							project: { title: "Demo Project", href: "/api/v3/projects/1" },
 						},
 					},
 				],
@@ -110,9 +113,110 @@ describe("OpenProjectService", () => {
 				subject: "Implement feature X",
 				description: "Detailed description",
 				status: "Open",
-				projectName: "Demo Project",
 			})
 			expect(tasks[0].url).toContain("/work_packages/123")
+		} finally {
+			global.fetch = originalFetch
+		}
+	})
+
+	it("should extract gitRepoUrl from _links.customField3.title when top-level customField3 is absent", async () => {
+		const service = new OpenProjectService(log)
+
+		const mockResponse = {
+			_embedded: {
+				elements: [
+					{
+						id: 789,
+						subject: "Links-only git URL",
+						description: { raw: "Test _links.customField3.title extraction" },
+						_embedded: {
+							status: { name: "New" },
+						},
+						_links: {
+							self: { href: "/api/v3/work_packages/789" },
+							project: { title: "Demo", href: "/api/v3/projects/1" },
+							customField3: {
+								title: "https://gitlab.ebk.vn/ai-agents/hello-world.git",
+								href: "/api/v3/custom_options/8",
+							},
+						},
+						// No top-level customField3
+					},
+				],
+			},
+		}
+
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: "OK",
+			json: () => Promise.resolve(mockResponse),
+		})
+
+		const originalFetch = global.fetch
+		global.fetch = fetchMock
+
+		try {
+			const tasks = await service.fetchAssignedOpenTasks({
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+			})
+
+			expect(tasks).toHaveLength(1)
+			expect(tasks[0].gitRepoUrl).toBe("https://gitlab.ebk.vn/ai-agents/hello-world.git")
+		} finally {
+			global.fetch = originalFetch
+		}
+	})
+
+	it("should prefer top-level customField3.title over _links.customField3.title for gitRepoUrl", async () => {
+		const service = new OpenProjectService(log)
+
+		const mockResponse = {
+			_embedded: {
+				elements: [
+					{
+						id: 790,
+						subject: "Both custom field locations",
+						description: { raw: "Top-level should win" },
+						_embedded: {
+							status: { name: "New" },
+						},
+						customField3: { title: "https://top-level.example.com/repo.git" },
+						_links: {
+							self: { href: "/api/v3/work_packages/790" },
+							project: { title: "Demo", href: "/api/v3/projects/1" },
+							customField3: {
+								title: "https://links-level.example.com/repo.git",
+								href: "/api/v3/custom_options/9",
+							},
+						},
+					},
+				],
+			},
+		}
+
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: "OK",
+			json: () => Promise.resolve(mockResponse),
+		})
+
+		const originalFetch = global.fetch
+		global.fetch = fetchMock
+
+		try {
+			const tasks = await service.fetchAssignedOpenTasks({
+				baseUrl: "https://openproject.example.com",
+				apiToken: "token",
+				userIdOrMe: "me",
+			})
+
+			expect(tasks).toHaveLength(1)
+			expect(tasks[0].gitRepoUrl).toBe("https://top-level.example.com/repo.git")
 		} finally {
 			global.fetch = originalFetch
 		}
@@ -164,14 +268,24 @@ describe("OpenProjectService", () => {
 	})
 
 	describe("updateWorkPackageStatus", () => {
-		it("should PATCH the work package with the correct status link", async () => {
+		it("should GET lockVersion then PATCH the work package with the correct status link and lockVersion", async () => {
 			const service = new OpenProjectService(log)
 
-			const fetchMock = vi.fn().mockResolvedValue({
-				ok: true,
-				status: 200,
-				statusText: "OK",
-			})
+			const fetchMock = vi
+				.fn()
+				// First call: GET to fetch lockVersion
+				.mockResolvedValueOnce({
+					ok: true,
+					status: 200,
+					statusText: "OK",
+					json: () => Promise.resolve({ id: 42, lockVersion: 5 }),
+				})
+				// Second call: PATCH to update status
+				.mockResolvedValueOnce({
+					ok: true,
+					status: 200,
+					statusText: "OK",
+				})
 
 			const originalFetch = global.fetch
 			global.fetch = fetchMock
@@ -187,29 +301,76 @@ describe("OpenProjectService", () => {
 					7,
 				)
 
-				expect(fetchMock).toHaveBeenCalledTimes(1)
+				expect(fetchMock).toHaveBeenCalledTimes(2)
 
-				const [url, options] = fetchMock.mock.calls[0]
-				expect(url).toBe("https://openproject.example.com/api/v3/work_packages/42")
-				expect(options.method).toBe("PATCH")
-				expect(options.headers["Content-Type"]).toBe("application/json")
-				expect(options.headers.Authorization).toContain("Basic ")
+				// First call: GET to fetch lockVersion
+				const [getUrl, getOptions] = fetchMock.mock.calls[0]
+				expect(getUrl).toBe("https://openproject.example.com/api/v3/work_packages/42")
+				expect(getOptions.method).toBe("GET")
+				expect(getOptions.headers.Authorization).toContain("Basic ")
 
-				const body = JSON.parse(options.body)
+				// Second call: PATCH with lockVersion
+				const [patchUrl, patchOptions] = fetchMock.mock.calls[1]
+				expect(patchUrl).toBe("https://openproject.example.com/api/v3/work_packages/42")
+				expect(patchOptions.method).toBe("PATCH")
+				expect(patchOptions.headers["Content-Type"]).toBe("application/json")
+				expect(patchOptions.headers.Authorization).toContain("Basic ")
+
+				const body = JSON.parse(patchOptions.body)
+				expect(body.lockVersion).toBe(5)
 				expect(body._links.status.href).toBe("/api/v3/statuses/7")
 			} finally {
 				global.fetch = originalFetch
 			}
 		})
 
-		it("should throw an error when the API returns a non-ok response", async () => {
+		it("should throw an error when the GET for lockVersion returns a non-ok response", async () => {
 			const service = new OpenProjectService(log)
 
 			const fetchMock = vi.fn().mockResolvedValue({
 				ok: false,
-				status: 422,
-				statusText: "Unprocessable Entity",
+				status: 404,
+				statusText: "Not Found",
 			})
+
+			const originalFetch = global.fetch
+			global.fetch = fetchMock
+
+			try {
+				await expect(
+					service.updateWorkPackageStatus(
+						{
+							baseUrl: "https://openproject.example.com",
+							apiToken: "my-api-token",
+							userIdOrMe: "me",
+						},
+						42,
+						7,
+					),
+				).rejects.toThrow("Failed to fetch work package 42 for lockVersion: 404 Not Found")
+			} finally {
+				global.fetch = originalFetch
+			}
+		})
+
+		it("should throw an error when the PATCH returns a non-ok response", async () => {
+			const service = new OpenProjectService(log)
+
+			const fetchMock = vi
+				.fn()
+				// GET succeeds
+				.mockResolvedValueOnce({
+					ok: true,
+					status: 200,
+					statusText: "OK",
+					json: () => Promise.resolve({ id: 42, lockVersion: 3 }),
+				})
+				// PATCH fails
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 422,
+					statusText: "Unprocessable Entity",
+				})
 
 			const originalFetch = global.fetch
 			global.fetch = fetchMock
@@ -250,7 +411,7 @@ describe("OpenProjectTaskSync", () => {
 		vi.mocked(vscode.window.showErrorMessage).mockClear()
 		vi.mocked(vscode.window.withProgress).mockClear()
 		// Restore default withProgress implementation
-		vi.mocked(vscode.window.withProgress).mockImplementation((_options: any, task: Function) =>
+		vi.mocked(vscode.window.withProgress).mockImplementation((_options: any, task: (...args: any[]) => any) =>
 			task({ report: vi.fn() }),
 		)
 		mockStatusBarItem.show.mockClear()
@@ -282,7 +443,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Test task",
 				description: "Do something important",
 				status: "Open",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/1",
 			},
 		])
@@ -327,7 +487,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Status update test",
 				description: "Should trigger status update",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/99",
 			},
 		])
@@ -376,7 +535,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Status update failure test",
 				description: "Status update will fail",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/50",
 			},
 		])
@@ -427,7 +585,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Single new task",
 				description: "Only one",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/10",
 			},
 		])
@@ -469,7 +626,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "First task",
 				description: "Task one",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/20",
 			},
 			{
@@ -477,7 +633,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Second task",
 				description: "Task two",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/21",
 			},
 			{
@@ -485,7 +640,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Third task",
 				description: "Task three",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/22",
 			},
 		])
@@ -526,7 +680,6 @@ describe("OpenProjectTaskSync", () => {
 			subject: "Already known task",
 			description: "Seen before",
 			status: "New",
-			projectName: "Demo",
 			url: "https://openproject.example.com/api/v3/work_packages/30",
 		}
 
@@ -615,7 +768,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Already known task",
 				description: "Seen before",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/40",
 			},
 		])
@@ -664,7 +816,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task A",
 				description: "Desc A",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/60",
 			},
 			{
@@ -672,7 +823,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task B",
 				description: "Desc B",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/61",
 			},
 		])
@@ -799,7 +949,7 @@ describe("OpenProjectTaskSync", () => {
 		} as any
 
 		// Make exec succeed
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(null, "", "")
 		})
 
@@ -809,7 +959,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with git repo",
 				description: "Has a git repo URL",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/200",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/hello-world.git",
 			},
@@ -842,14 +991,16 @@ describe("OpenProjectTaskSync", () => {
 		const calledCmd: string = mockExec.mock.calls[0][0]
 		expect(calledCmd).toContain("git clone")
 		expect(calledCmd).toContain("oauth2:test-git-token@gitlab.ebk.vn")
-		// Destination should be workspaceFolder/repoName (NOT ../projects/repoName)
-		expect(calledCmd).toContain(`${mockWorkspaceRoot}/hello-world`)
-		expect(calledCmd).not.toContain("../projects/")
+		// Destination should be workspaceFolder/projects/repoName (derived from git URL)
+		expect(calledCmd).toContain(`${mockWorkspaceRoot}/projects/hello-world`)
 		// Should use single quotes to prevent shell interpolation
 		expect(calledCmd).toMatch(/git clone '.*' '.*'/)
 
 		// Roo task should have been created
 		expect(createTask).toHaveBeenCalledTimes(1)
+		// Prompt should include the relative source code path
+		const prompt: string = createTask.mock.calls[0][0]
+		expect(prompt).toContain("Source code: projects/hello-world")
 
 		// Restore workspaceFolders
 		vi.mocked(vscode.workspace as any).workspaceFolders = undefined
@@ -865,7 +1016,7 @@ describe("OpenProjectTaskSync", () => {
 		} as any
 
 		// Make exec fail
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(new Error("authentication failed"), "", "authentication failed")
 		})
 
@@ -875,7 +1026,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with failing git repo",
 				description: "Clone will fail",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/202",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/secret-repo.git",
 			},
@@ -927,7 +1077,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task without git repo",
 				description: "No git repo URL",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/201",
 				// No gitRepoUrl field
 			},
@@ -957,6 +1106,9 @@ describe("OpenProjectTaskSync", () => {
 
 		// Roo task should still have been created
 		expect(createTask).toHaveBeenCalledTimes(1)
+		// Prompt should NOT include a source code path when no gitRepoUrl
+		const prompt: string = createTask.mock.calls[0][0]
+		expect(prompt).not.toContain("Source code:")
 
 		sync.dispose()
 	})
@@ -968,7 +1120,7 @@ describe("OpenProjectTaskSync", () => {
 			log: vi.fn(),
 		} as any
 
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(null, "", "")
 		})
 
@@ -978,7 +1130,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with special char token",
 				description: "Token has special chars",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/300",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/hello-world.git",
 			},
@@ -1033,7 +1184,7 @@ describe("OpenProjectTaskSync", () => {
 		const secretToken = "glpat-super-secret-token-123"
 
 		// Make exec fail with an error that includes the token in stderr
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(
 				new Error("fatal: could not read"),
 				"",
@@ -1047,7 +1198,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with redact test",
 				description: "Clone error should redact token",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/301",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/repo.git",
 			},
@@ -1088,7 +1238,7 @@ describe("OpenProjectTaskSync", () => {
 			log: vi.fn(),
 		} as any
 
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(null, "", "")
 		})
 
@@ -1098,7 +1248,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task without git key",
 				description: "No gitAccessKey set",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/302",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/hello-world.git",
 			},
@@ -1146,7 +1295,7 @@ describe("OpenProjectTaskSync", () => {
 			log: vi.fn(),
 		} as any
 
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(null, "", "")
 		})
 
@@ -1156,7 +1305,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with clone status",
 				description: "Check progress notification during clone",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/400",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/my-repo.git",
 			},
@@ -1197,7 +1345,7 @@ describe("OpenProjectTaskSync", () => {
 			log: vi.fn(),
 		} as any
 
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(null, "", "")
 		})
 
@@ -1207,7 +1355,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with clone success status",
 				description: "Check status bar after clone",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/401",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/my-repo.git",
 			},
@@ -1234,9 +1381,7 @@ describe("OpenProjectTaskSync", () => {
 
 		// After the poll completes, the status bar will show the poll result (e.g. "1 new task")
 		// but the clone success status was set during handleTask. We verify the information message.
-		expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-			"OpenProject: Successfully cloned my-repo",
-		)
+		expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("OpenProject: Successfully cloned my-repo")
 
 		sync.dispose()
 	})
@@ -1248,7 +1393,7 @@ describe("OpenProjectTaskSync", () => {
 			log: vi.fn(),
 		} as any
 
-		mockExec.mockImplementation((_cmd: string, callback: Function) => {
+		mockExec.mockImplementation((_cmd: string, callback: (...args: any[]) => void) => {
 			callback(new Error("permission denied"), "", "permission denied")
 		})
 
@@ -1258,7 +1403,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with clone failure status",
 				description: "Check error message on clone failure",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/402",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/fail-repo.git",
 			},
@@ -1283,9 +1427,7 @@ describe("OpenProjectTaskSync", () => {
 
 		await new Promise((resolve) => setTimeout(resolve, 0))
 
-		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-			"OpenProject Git Clone Error: permission denied",
-		)
+		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith("OpenProject Git Clone Error: permission denied")
 
 		sync.dispose()
 	})
@@ -1306,7 +1448,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with existing repo",
 				description: "Repo already cloned",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/403",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/existing-repo.git",
 			},
@@ -1337,6 +1478,10 @@ describe("OpenProjectTaskSync", () => {
 		expect(mockExec).not.toHaveBeenCalled()
 		// Roo task should still have been created
 		expect(createTask).toHaveBeenCalledTimes(1)
+		// Prompt should still include source code path even when repo already existed
+		const prompt: string = createTask.mock.calls[0][0]
+		expect(prompt).toContain("Source code:")
+		expect(prompt).toContain("existing-repo")
 
 		sync.dispose()
 	})
@@ -1357,7 +1502,6 @@ describe("OpenProjectTaskSync", () => {
 				subject: "Task with already-cloned repo",
 				description: "Should not show clone success message",
 				status: "New",
-				projectName: "Demo",
 				url: "https://openproject.example.com/api/v3/work_packages/404",
 				gitRepoUrl: "https://gitlab.ebk.vn/ai-agents/already-cloned.git",
 			},
@@ -1383,9 +1527,11 @@ describe("OpenProjectTaskSync", () => {
 		await new Promise((resolve) => setTimeout(resolve, 0))
 
 		// Should NOT show "Successfully cloned" message since it was already there
-		const cloneSuccessCalls = vi.mocked(vscode.window.showInformationMessage).mock.calls.filter(
-			(call) => typeof call[0] === "string" && (call[0] as string).includes("Successfully cloned"),
-		)
+		const cloneSuccessCalls = vi
+			.mocked(vscode.window.showInformationMessage)
+			.mock.calls.filter(
+				(call) => typeof call[0] === "string" && (call[0] as string).includes("Successfully cloned"),
+			)
 		expect(cloneSuccessCalls).toHaveLength(0)
 
 		sync.dispose()

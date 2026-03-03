@@ -1,3 +1,4 @@
+import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
 import { exec } from "child_process"
@@ -155,9 +156,17 @@ export class OpenProjectTaskSync {
 				userIdOrMe,
 			}
 
+			this.log("[OpenProjectTaskSync] pollOnce() starting — fetching tasks...")
+
 			const tasks = await this.service.fetchAssignedOpenTasks(clientConfig)
 
-			this.log("[OpenProjectTaskSync] Retrieved tasks from OpenProject:", tasks.length)
+			this.log("[OpenProjectTaskSync] pollOnce() returned", tasks.length, "task(s)")
+
+			for (const task of tasks) {
+				this.log(
+					`[OpenProjectTaskSync] Task summary — id=${task.id}, subject="${task.subject}", gitRepoUrl=${task.gitRepoUrl ?? "(undefined)"}`,
+				)
+			}
 
 			let newTaskCount = 0
 			for (const task of tasks) {
@@ -199,18 +208,33 @@ export class OpenProjectTaskSync {
 	 * @returns The local path where the repo was cloned, or undefined if no URL provided.
 	 */
 	private async cloneGitRepo(gitRepoUrl: string): Promise<string> {
+		this.log(`[OpenProjectTaskSync] cloneGitRepo() called — gitRepoUrl="${gitRepoUrl}"`)
+
 		// Derive repo name from the URL (strip .git suffix)
 		const repoName = path.basename(gitRepoUrl, ".git")
+
+		// Sanitize repoName to prevent path traversal and special characters
+		const safeDirName = repoName.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^\.+/, "")
 
 		// Determine clone destination
 		let destPath: string
 		const workspaceFolders = vscode.workspace.workspaceFolders
-		if (workspaceFolders && workspaceFolders.length > 0) {
-			const workspaceRoot = workspaceFolders[0].uri.fsPath
-			destPath = path.join(workspaceRoot, repoName)
+		const hasWorkspace = !!(workspaceFolders && workspaceFolders.length > 0)
+		this.log(`[OpenProjectTaskSync] cloneGitRepo() — workspace folder found: ${hasWorkspace}`)
+
+		if (hasWorkspace) {
+			const workspaceRoot = workspaceFolders![0].uri.fsPath
+			this.log(`[OpenProjectTaskSync] cloneGitRepo() — workspace root: ${workspaceRoot}`)
+			destPath = path.join(workspaceRoot, "projects", safeDirName)
 		} else {
-			destPath = path.join(os.homedir(), "roo-projects", repoName)
+			destPath = path.join(os.homedir(), "roo-projects", safeDirName)
 		}
+
+		this.log(`[OpenProjectTaskSync] cloneGitRepo() — destPath: ${destPath}`)
+
+		// Ensure the parent directory exists
+		const parentDir = path.dirname(destPath)
+		fs.mkdirSync(parentDir, { recursive: true })
 
 		// Inject credentials into URL using string replacement to avoid
 		// percent-encoding by the URL class (which mangles tokens containing
@@ -229,13 +253,16 @@ export class OpenProjectTaskSync {
 		}
 
 		// Check if the destination already exists — skip cloning if so
-		const { existsSync } = await import("fs")
-		if (existsSync(destPath)) {
+		const destExists = fs.existsSync(destPath)
+		this.log(`[OpenProjectTaskSync] cloneGitRepo() — destPath already exists: ${destExists}`)
+		if (destExists) {
 			this.log(`[OpenProjectTaskSync] Repo already exists at ${destPath}, skipping clone.`)
 			return destPath
 		}
 
-		this.log(`[OpenProjectTaskSync] Cloning ${gitRepoUrl} into ${destPath}`)
+		// Redact the token from the logged command
+		const redactedUrl = gitAccessKey ? authenticatedUrl.replace(gitAccessKey, "***REDACTED***") : authenticatedUrl
+		this.log(`[OpenProjectTaskSync] cloneGitRepo() — executing: git clone '${redactedUrl}' '${destPath}'`)
 
 		await vscode.window.withProgress(
 			{
@@ -251,7 +278,10 @@ export class OpenProjectTaskSync {
 						if (error) {
 							// Redact the token from error messages to avoid leaking secrets
 							const safeStderr = gitAccessKey
-								? (stderr || error.message).replace(new RegExp(gitAccessKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "***")
+								? (stderr || error.message).replace(
+										new RegExp(gitAccessKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+										"***",
+									)
 								: stderr || error.message
 							reject(new Error(safeStderr))
 						} else {
@@ -269,15 +299,22 @@ export class OpenProjectTaskSync {
 
 	private async handleTask(task: OpenProjectTask, clientConfig: OpenProjectClientConfig): Promise<boolean> {
 		if (this.knownTaskIds.has(task.id)) {
+			this.log(`[OpenProjectTaskSync] handleTask() — task #${task.id} already in knownTaskIds, skipping`)
 			return false
 		}
 
 		this.knownTaskIds.add(task.id)
 
+		this.log(
+			`[OpenProjectTaskSync] handleTask() — task #${task.id}: gitRepoUrl=${task.gitRepoUrl ?? "(undefined)"}`,
+		)
+
 		// Clone the git repo if gitRepoUrl is present before creating the Roo task
+		let clonedPath: string | undefined
 		if (task.gitRepoUrl) {
+			this.log(`[OpenProjectTaskSync] handleTask() — task #${task.id}: gitRepoUrl is present, will attempt clone`)
 			try {
-				await this.cloneGitRepo(task.gitRepoUrl)
+				clonedPath = await this.cloneGitRepo(task.gitRepoUrl)
 			} catch (cloneError) {
 				const cloneErrorMessage = cloneError instanceof Error ? cloneError.message : String(cloneError)
 				this.log(`[OpenProjectTaskSync] Failed to clone repo for task #${task.id}: ${cloneErrorMessage}`)
@@ -286,9 +323,11 @@ export class OpenProjectTaskSync {
 				this.knownTaskIds.delete(task.id)
 				return false
 			}
+		} else {
+			this.log(`[OpenProjectTaskSync] handleTask() — task #${task.id}: no gitRepoUrl, skipping clone`)
 		}
 
-		const prompt = this.buildTaskPrompt(task)
+		const prompt = this.buildTaskPrompt(task, clonedPath)
 
 		this.log(`[OpenProjectTaskSync] Creating Roo task for OpenProject work package ${task.id} (${task.subject})`)
 
@@ -318,25 +357,32 @@ export class OpenProjectTaskSync {
 	/**
 	 * Build the natural-language task prompt that Roo will see from an OpenProject task.
 	 */
-	private buildTaskPrompt(task: OpenProjectTask): string {
+	private buildTaskPrompt(task: OpenProjectTask, clonedPath?: string): string {
 		const lines: string[] = []
 
 		lines.push(`[OpenProject #${task.id}] ${task.subject}`)
 
-		const statusParts: string[] = []
 		if (task.status) {
-			statusParts.push(`status: ${task.status}`)
-		}
-		if (task.projectName) {
-			statusParts.push(`project: ${task.projectName}`)
-		}
-		if (statusParts.length) {
-			lines.push(`(${statusParts.join(", ")})`)
+			lines.push(`(status: ${task.status})`)
 		}
 
 		if (task.description) {
 			lines.push("")
 			lines.push(task.description)
+		}
+
+		if (clonedPath) {
+			// Convert absolute path to a relative path from the workspace root
+			const workspaceFolders = vscode.workspace.workspaceFolders
+			let displayPath = clonedPath
+			if (workspaceFolders && workspaceFolders.length > 0) {
+				const workspaceRoot = workspaceFolders[0].uri.fsPath
+				if (clonedPath.startsWith(workspaceRoot)) {
+					displayPath = path.relative(workspaceRoot, clonedPath)
+				}
+			}
+			lines.push("")
+			lines.push(`Source code: ${displayPath}`)
 		}
 
 		if (task.url) {
