@@ -22,6 +22,7 @@ export type RooCliCommandBase = z.infer<typeof rooCliCommandBaseSchema>
 export const rooCliStartCommandSchema = rooCliCommandBaseSchema.extend({
 	command: z.literal("start"),
 	prompt: z.string(),
+	images: z.array(z.string()).optional(),
 	configuration: rooCodeSettingsSchema.optional(),
 })
 
@@ -30,6 +31,7 @@ export type RooCliStartCommand = z.infer<typeof rooCliStartCommandSchema>
 export const rooCliMessageCommandSchema = rooCliCommandBaseSchema.extend({
 	command: z.literal("message"),
 	prompt: z.string(),
+	images: z.array(z.string()).optional(),
 })
 
 export type RooCliMessageCommand = z.infer<typeof rooCliMessageCommandSchema>
@@ -115,6 +117,7 @@ export const rooCliToolResultSchema = z.object({
 	name: z.string(),
 	output: z.string().optional(),
 	error: z.string().optional(),
+	exitCode: z.number().optional(),
 })
 
 export type RooCliToolResult = z.infer<typeof rooCliToolResultSchema>

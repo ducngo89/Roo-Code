@@ -108,7 +108,7 @@ interface WebviewViewProvider {
 export interface ExtensionHostInterface extends IExtensionHost<ExtensionHostEventMap> {
 	client: ExtensionClient
 	activate(): Promise<void>
-	runTask(prompt: string, taskId?: string, configuration?: RooCodeSettings): Promise<void>
+	runTask(prompt: string, taskId?: string, configuration?: RooCodeSettings, images?: string[]): Promise<void>
 	resumeTask(taskId: string): Promise<void>
 	sendToExtension(message: WebviewMessage): void
 	dispose(): Promise<void>
@@ -221,7 +221,7 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 		const baseSettings: RooCodeSettings = {
 			mode: this.options.mode,
 			consecutiveMistakeLimit: this.options.consecutiveMistakeLimit ?? DEFAULT_FLAGS.consecutiveMistakeLimit,
-			commandExecutionTimeout: 30,
+			commandExecutionTimeout: 300,
 			enableCheckpoints: false,
 			experiments: {
 				customTools: true,
@@ -510,8 +510,19 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 		})
 	}
 
-	public async runTask(prompt: string, taskId?: string, configuration?: RooCodeSettings): Promise<void> {
-		this.sendToExtension({ type: "newTask", text: prompt, taskId, taskConfiguration: configuration })
+	public async runTask(
+		prompt: string,
+		taskId?: string,
+		configuration?: RooCodeSettings,
+		images?: string[],
+	): Promise<void> {
+		this.sendToExtension({
+			type: "newTask",
+			text: prompt,
+			taskId,
+			taskConfiguration: configuration,
+			...(images !== undefined ? { images } : {}),
+		})
 		return this.waitForTaskCompletion()
 	}
 

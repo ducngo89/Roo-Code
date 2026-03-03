@@ -5,6 +5,63 @@ All notable changes to the `@roo-code/cli` package will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-03-02
+
+### Added
+
+- **Skills as Slash Commands**: Skills are now exposed as slash commands, so you can invoke skill workflows directly from command-style input.
+- **Skill Fallback Execution**: When a slash command does not match a command file but matches a skill slug, the CLI can resolve and execute that skill path.
+
+### Changed
+
+- **Slash Command Resolution Priority**: Command precedence is preserved, with skill fallback only used when no matching slash command is found.
+
+### Tests
+
+- Added and updated tests for slash command + skill fallback behavior, including command precedence and duplicate skill-slug handling.
+
+## [0.1.12] - 2026-03-02
+
+### Fixed
+
+- **Command Timeout Handling**: CLI runtime now correctly ignores model-provided background timeouts for commands, ensuring command lifetime is governed solely by the `--timeout` setting.
+
+## [0.1.11] - 2026-03-02
+
+### Added
+
+- **Image Support in Stdin Stream**: The `start` and `message` commands in stdin-stream mode now support an optional `images` field (array of base64 data URIs) to attach images to prompts.
+
+### Fixed
+
+- **Upgrade Version Detection**: Fixed version detection in the `upgrade` command to correctly identify when updates are available.
+
+## [0.1.10] - 2026-03-02
+
+### Added
+
+- **Command Exit Code in Events**: The `tool_result` event for command executions now includes an `exitCode` field, allowing CLI consumers to programmatically distinguish between successful and failed command executions without parsing output text.
+
+## [0.1.9] - 2026-03-02
+
+### Fixed
+
+- **Stdin Stream Cancel Race**: Fixed a race condition during startup cancellation in stdin-stream mode that could cause unexpected behavior when canceling tasks immediately after starting them.
+
+### Tests
+
+- **Integration Test Suite**: Added comprehensive integration test suite for stdin-stream protocol covering cancel, followup, multi-message queue, and shutdown scenarios.
+
+## [0.1.8] - 2026-03-02
+
+### Changed
+
+- **Command Execution Timeout**: Increased timeout for command execution to improve reliability for long-running operations.
+
+### Fixed
+
+- **Stdin Stream Queue Handling**: Fixed stdin stream queued messages and command output streaming to ensure messages are properly processed.
+
 ## [0.1.7] - 2026-03-01
 
 ### Fixed
